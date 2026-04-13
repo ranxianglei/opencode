@@ -19,7 +19,8 @@ import { iife } from "@/util/iife"
 import { Global } from "../global"
 import path from "path"
 import { Filesystem } from "../util/filesystem"
-import { Effect, Layer, ServiceMap } from "effect"
+import { Effect, Layer, Context } from "effect"
+import { EffectLogger } from "@/effect/logger"
 import { InstanceState } from "@/effect/instance-state"
 import { makeRuntime } from "@/effect/run-service"
 
@@ -45,6 +46,7 @@ import { createTogetherAI } from "@ai-sdk/togetherai"
 import { createPerplexity } from "@ai-sdk/perplexity"
 import { createVercel } from "@ai-sdk/vercel"
 import { createVenice } from "venice-ai-sdk-provider"
+import { createAlibaba } from "@ai-sdk/alibaba"
 import {
   createGitLab,
   VERSION as GITLAB_PROVIDER_VERSION,
@@ -144,6 +146,7 @@ export namespace Provider {
     "@ai-sdk/togetherai": createTogetherAI,
     "@ai-sdk/perplexity": createPerplexity,
     "@ai-sdk/vercel": createVercel,
+    "@ai-sdk/alibaba": createAlibaba,
     "gitlab-ai-provider": createGitLab,
     "@ai-sdk/github-copilot": createGitHubCopilotOpenAICompatible,
     "venice-ai-sdk-provider": createVenice,
@@ -924,7 +927,7 @@ export namespace Provider {
     varsLoaders: Record<string, CustomVarsLoader>
   }
 
-  export class Service extends ServiceMap.Service<Service, Interface>()("@opencode/Provider") {}
+  export class Service extends Context.Service<Service, Interface>()("@opencode/Provider") {}
 
   function cost(c: ModelsDev.Model["cost"]): Model["cost"] {
     const result: Model["cost"] = {
@@ -1215,7 +1218,8 @@ export namespace Provider {
 
             const options = yield* Effect.promise(() =>
               plugin.auth!.loader!(
-                () => Effect.runPromise(auth.get(providerID).pipe(Effect.orDie)) as any,
+                () =>
+                  Effect.runPromise(auth.get(providerID).pipe(Effect.orDie, Effect.provide(EffectLogger.layer))) as any,
                 database[plugin.auth!.provider],
               ),
             )
