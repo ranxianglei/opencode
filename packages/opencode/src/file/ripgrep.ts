@@ -408,14 +408,6 @@ export namespace Ripgrep {
       }) {
         return yield* Effect.scoped(
           Effect.gen(function* () {
-            const parse = Effect.fn("Ripgrep.parse")(function* (line: string) {
-              const row = yield* Effect.try({
-                try: () => Result.parse(JSON.parse(line)),
-                catch: (cause) => new Error(`invalid ripgrep output: ${cause}`),
-              })
-              if (row.type !== "match") return undefined
-              return row.data
-            })
             const cmd = yield* args({
               mode: "search",
               glob: input.glob,
@@ -436,8 +428,11 @@ export namespace Ripgrep {
                 Stream.decodeText(handle.stdout).pipe(
                   Stream.splitLines,
                   Stream.filter((line) => line.length > 0),
-                  Stream.mapEffect(parse),
-                  Stream.filter((item): item is Item => item !== undefined),
+                  Stream.mapEffect((line) =>
+                    decode(line).pipe(Effect.mapError((cause) => new Error("invalid ripgrep output", { cause }))),
+                  ),
+                  Stream.filter((row): row is Schema.Schema.Type<typeof Hit> => row.type === "match"),
+                  Stream.map((row): Item => row.data),
                   Stream.runCollect,
                   Effect.map((chunk) => [...chunk]),
                 ),
