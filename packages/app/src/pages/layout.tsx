@@ -2343,6 +2343,7 @@ export default function Layout(props: ParentProps) {
   }
 
   const projects = () => layout.projects.list()
+  const projectIds = createMemo(() => projects().map((project) => project.worktree))
   const projectOverlay = () => <ProjectDragOverlay projects={projects} activeProject={() => store.activeProject} />
   const sidebarContent = (mobile?: boolean) => (
     <SidebarContent
@@ -2350,9 +2351,17 @@ export default function Layout(props: ParentProps) {
       opened={() => layout.sidebar.opened()}
       aimMove={aim.move}
       projects={projects}
-      renderProject={(project) => (
-        <SortableProject ctx={projectSidebarCtx} project={project} sortNow={sortNow} mobile={mobile} />
-      )}
+      projectIds={projectIds}
+      renderProject={(worktree) => {
+        const project = createMemo(() => projects().find((item) => item.worktree === worktree))
+        return (
+          <Show when={project()}>
+            {(project) => (
+              <SortableProject ctx={projectSidebarCtx} project={project()} sortNow={sortNow} mobile={mobile} />
+            )}
+          </Show>
+        )
+      }}
       handleDragStart={handleDragStart}
       handleDragEnd={handleDragEnd}
       handleDragOver={handleDragOver}
