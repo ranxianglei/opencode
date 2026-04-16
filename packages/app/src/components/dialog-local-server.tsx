@@ -44,6 +44,11 @@ export function DialogLocalServer() {
   const busy = createMemo(() => !!current()?.job)
   const mode = createMemo(() => current()?.config.mode ?? "windows")
   const selected = createMemo(() => current()?.checks.distro?.selected)
+  const otherDistros = createMemo(() =>
+    (current()?.checks.distro?.online ?? [])
+      .filter((item) => item.name !== "Debian" && item.name !== "Ubuntu-24.04")
+      .slice(0, 8),
+  )
   const configuredRuntime = createMemo(() => {
     const state = current()
     if (!state) return { mode: "windows" as const, distro: null as string | null }
@@ -223,6 +228,26 @@ export function DialogLocalServer() {
                 Install Ubuntu 24
               </Button>
             </div>
+
+            <Show when={otherDistros().length > 0}>
+              <div class="flex flex-col gap-2">
+                <div class="text-12-medium text-text-strong">Other distros</div>
+                <div class="flex flex-wrap gap-2">
+                  <For each={otherDistros()}>
+                    {(item) => (
+                      <Button
+                        variant="secondary"
+                        size="large"
+                        disabled={busy()}
+                        onClick={() => void run(() => localServer()!.installDistro(item.name))}
+                      >
+                        {item.label}
+                      </Button>
+                    )}
+                  </For>
+                </div>
+              </div>
+            </Show>
 
             <div class="flex flex-col gap-2">
               <div class="text-12-medium text-text-strong">Installed distros</div>
