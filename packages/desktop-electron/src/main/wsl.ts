@@ -29,8 +29,20 @@ export function wslArgs(args: string[], distro?: string | null) {
 }
 
 export function runWsl(args: string[], opts: RunWslOptions = {}) {
+  return runCommand("wsl", args, opts)
+}
+
+function runPowerShell(command: string, opts: RunWslOptions = {}) {
+  return runCommand(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", command],
+    opts,
+  )
+}
+
+function runCommand(command: string, args: string[], opts: RunWslOptions = {}) {
   return new Promise<WslCommandResult>((resolve, reject) => {
-    const child = spawn("wsl", args, {
+    const child = spawn(command, args, {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
       signal: opts.signal,
@@ -136,8 +148,21 @@ export async function installWslRuntime(opts?: RunWslOptions) {
   return runWsl(["--install", "--no-distribution"], opts)
 }
 
+export async function installWslRuntimeElevated(opts?: RunWslOptions) {
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "$process = Start-Process -FilePath 'wsl.exe' -Verb RunAs -ArgumentList @('--install','--no-distribution') -Wait -PassThru",
+    "if ($null -ne $process.ExitCode) { exit $process.ExitCode }",
+  ].join("; ")
+  return runPowerShell(script, opts)
+}
+
 export async function installWslDistro(name: string, opts?: RunWslOptions) {
   return runWsl(["--install", "-d", name, "--web-download", "--no-launch"], opts)
+}
+
+export function wslNeedsRestart(result: WslCommandResult) {
+  return /restart|reboot/i.test(`${result.stdout}\n${result.stderr}`)
 }
 
 export async function probeWslDistro(name: string, opts?: RunWslOptions): Promise<LocalServerDistroProbe> {

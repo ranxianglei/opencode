@@ -255,6 +255,8 @@ registerIpcHandlers({
   setLocalServerConfig: (config) => localServer.setConfig(config),
   runLocalServerStep: (step) => localServer.runStep(step),
   cancelLocalServerJob: () => localServer.cancelJob(),
+  installLocalServerWsl: () => localServer.installWsl(),
+  installLocalServerDistro: (name) => localServer.installDistro(name),
   openLocalServerTerminal: () => localServer.openTerminal(),
   onLocalServerEvent: (listener) => localServer.subscribe(listener),
   getDefaultServerUrl: () => getDefaultServerUrl(),

@@ -8,7 +8,16 @@ import type {
 } from "../preload/types"
 import { LOCAL_SERVER_KEY } from "./constants"
 import { store } from "./store"
-import { listInstalledWslDistros, listOnlineWslDistros, openWslTerminal, probeWslDistro, probeWslRuntime } from "./wsl"
+import {
+  installWslDistro,
+  installWslRuntimeElevated,
+  listInstalledWslDistros,
+  listOnlineWslDistros,
+  openWslTerminal,
+  probeWslDistro,
+  probeWslRuntime,
+  wslNeedsRestart,
+} from "./wsl"
 
 export function defaultLocalServerConfig(): LocalServerConfig {
   return {
@@ -54,17 +63,22 @@ export function createLocalServerController() {
     })
   }
 
+  const persistConfig = (config: LocalServerConfig) => {
+    const next = normalizeLocalServerConfig(config)
+    store.set(LOCAL_SERVER_KEY, next)
+    update({
+      ...state,
+      config: next,
+    })
+    return next
+  }
+
   return {
     getState() {
       return state
     },
     setConfig(config: LocalServerConfig) {
-      const next = normalizeLocalServerConfig(config)
-      store.set(LOCAL_SERVER_KEY, next)
-      update({
-        ...state,
-        config: next,
-      })
+      persistConfig(config)
     },
     subscribe(listener: (event: LocalServerEvent) => void) {
       listeners.add(listener)
@@ -179,6 +193,201 @@ export function createLocalServerController() {
         job: null,
         status: { kind: "idle" },
       })
+    },
+    async installWsl() {
+      jobAbort?.abort()
+      const abort = new AbortController()
+      jobAbort = abort
+      clearTranscript()
+      appendTranscript({ stream: "system", text: "Installing WSL runtime" })
+      persistConfig({
+        ...state.config,
+        mode: "wsl",
+        onboarding: {
+          ...state.config.onboarding,
+          step: "wsl",
+          complete: false,
+          pendingRestart: false,
+        },
+      })
+      update({
+        ...state,
+        job: { step: "wsl", startedAt: Date.now() },
+        status: { kind: "running", step: "wsl" },
+      })
+
+      try {
+        const result = await installWslRuntimeElevated({
+          signal: abort.signal,
+          onLine: (line) => appendTranscript(line),
+        })
+        if (jobAbort !== abort) return
+        if (result.code !== 0) throw new Error(commandFailure(result, "WSL installation failed"))
+
+        const pendingRestart = wslNeedsRestart(result)
+        const nextConfig = persistConfig({
+          ...state.config,
+          mode: "wsl",
+          onboarding: {
+            ...state.config.onboarding,
+            step: pendingRestart ? "wsl" : "distro",
+            complete: false,
+            pendingRestart,
+          },
+        })
+
+        if (pendingRestart) {
+          const message = "Windows restart required to finish WSL installation"
+          update({
+            ...state,
+            config: nextConfig,
+            job: null,
+            status: { kind: "failed", step: "wsl", message },
+            checks: {
+              ...state.checks,
+              wsl: {
+                available: false,
+                version: null,
+                status: null,
+                error: message,
+              },
+            },
+          })
+          return
+        }
+
+        const wsl = await probeWslRuntime({
+          signal: abort.signal,
+          onLine: (line) => appendTranscript(line),
+        })
+        if (jobAbort !== abort) return
+        update({
+          ...state,
+          config: nextConfig,
+          job: null,
+          status: wsl.available
+            ? { kind: "ready" }
+            : { kind: "failed", step: "wsl", message: wsl.error ?? "WSL is unavailable" },
+          checks: {
+            ...state.checks,
+            wsl,
+          },
+        })
+      } catch (error) {
+        if (jobAbort !== abort) return
+        if (error instanceof Error && error.name === "AbortError") {
+          update({
+            ...state,
+            job: null,
+            status: { kind: "idle" },
+          })
+          return
+        }
+        update({
+          ...state,
+          job: null,
+          status: { kind: "failed", step: "wsl", message: error instanceof Error ? error.message : String(error) },
+        })
+      } finally {
+        if (jobAbort === abort) jobAbort = undefined
+      }
+    },
+    async installDistro(name: string) {
+      jobAbort?.abort()
+      const abort = new AbortController()
+      jobAbort = abort
+      clearTranscript()
+      appendTranscript({ stream: "system", text: `Installing WSL distro: ${name}` })
+      persistConfig({
+        ...state.config,
+        mode: "wsl",
+        distro: name,
+        onboarding: {
+          ...state.config.onboarding,
+          step: "distro",
+          complete: false,
+          pendingRestart: false,
+        },
+      })
+      update({
+        ...state,
+        job: { step: "distro", startedAt: Date.now() },
+        status: { kind: "running", step: "distro" },
+      })
+
+      try {
+        const result = await installWslDistro(name, {
+          signal: abort.signal,
+          onLine: (line) => appendTranscript(line),
+        })
+        if (jobAbort !== abort) return
+        if (result.code !== 0) throw new Error(commandFailure(result, `Failed to install distro: ${name}`))
+
+        const [installedResult, onlineResult] = await Promise.allSettled([
+          listInstalledWslDistros({
+            signal: abort.signal,
+            onLine: (line) => appendTranscript(line),
+          }),
+          listOnlineWslDistros({
+            signal: abort.signal,
+            onLine: (line) => appendTranscript(line),
+          }),
+        ])
+        if (jobAbort !== abort) return
+
+        const installed = installedResult.status === "fulfilled" ? installedResult.value : []
+        const online = onlineResult.status === "fulfilled" ? onlineResult.value : []
+        const selected = await probeWslDistro(name, {
+          signal: abort.signal,
+          onLine: (line) => appendTranscript(line),
+        })
+        if (jobAbort !== abort) return
+
+        const error = distroError(name, installed, selected, installedResult, onlineResult)
+        const nextConfig = persistConfig({
+          ...state.config,
+          mode: "wsl",
+          distro: name,
+          onboarding: {
+            ...state.config.onboarding,
+            step: error ? "distro" : "opencode",
+            complete: false,
+            pendingRestart: false,
+          },
+        })
+        update({
+          ...state,
+          config: nextConfig,
+          job: null,
+          status: error ? { kind: "failed", step: "distro", message: error } : { kind: "ready" },
+          checks: {
+            ...state.checks,
+            distro: {
+              installed,
+              online,
+              selected,
+              error,
+            },
+          },
+        })
+      } catch (error) {
+        if (jobAbort !== abort) return
+        if (error instanceof Error && error.name === "AbortError") {
+          update({
+            ...state,
+            job: null,
+            status: { kind: "idle" },
+          })
+          return
+        }
+        update({
+          ...state,
+          job: null,
+          status: { kind: "failed", step: "distro", message: error instanceof Error ? error.message : String(error) },
+        })
+      } finally {
+        if (jobAbort === abort) jobAbort = undefined
+      }
     },
     async openTerminal() {
       if (!state.config.distro) throw new Error("No WSL distro selected")
@@ -298,4 +507,13 @@ function distroError(
   }
   if (selected?.error) return selected.error
   return null
+}
+
+function commandFailure(result: { stdout: string; stderr: string }, fallback: string) {
+  const output = `${result.stderr}\n${result.stdout}`
+    .split(/\r?\n/g)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n")
+  return output || fallback
 }

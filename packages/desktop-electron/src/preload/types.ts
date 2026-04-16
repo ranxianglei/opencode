@@ -92,6 +92,8 @@ export type LocalServerAPI = {
   setConfig: (config: LocalServerConfig) => Promise<void>
   runStep: (step: LocalServerStep) => Promise<void>
   cancelJob: () => Promise<void>
+  installWsl: () => Promise<void>
+  installDistro: (name: string) => Promise<void>
   openTerminal: () => Promise<void>
   subscribe: (cb: (event: LocalServerEvent) => void) => () => void
 }

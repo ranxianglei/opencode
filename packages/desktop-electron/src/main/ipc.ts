@@ -27,6 +27,8 @@ type Deps = {
   setLocalServerConfig: (config: LocalServerConfig) => Promise<void> | void
   runLocalServerStep: (step: LocalServerStep) => Promise<void> | void
   cancelLocalServerJob: () => Promise<void> | void
+  installLocalServerWsl: () => Promise<void> | void
+  installLocalServerDistro: (name: string) => Promise<void> | void
   openLocalServerTerminal: () => Promise<void> | void
   onLocalServerEvent: (listener: (event: LocalServerEvent) => void) => () => void
   getDefaultServerUrl: () => Promise<string | null> | string | null
@@ -66,6 +68,10 @@ export function registerIpcHandlers(deps: Deps) {
     deps.runLocalServerStep(step),
   )
   ipcMain.handle("local-server-cancel-job", () => deps.cancelLocalServerJob())
+  ipcMain.handle("local-server-install-wsl", () => deps.installLocalServerWsl())
+  ipcMain.handle("local-server-install-distro", (_event: IpcMainInvokeEvent, name: string) =>
+    deps.installLocalServerDistro(name),
+  )
   ipcMain.handle("local-server-open-terminal", () => deps.openLocalServerTerminal())
   ipcMain.handle("get-default-server-url", () => deps.getDefaultServerUrl())
   ipcMain.handle("set-default-server-url", (_event: IpcMainInvokeEvent, url: string | null) =>
