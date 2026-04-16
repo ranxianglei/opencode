@@ -13,7 +13,7 @@ export function resolveAppPath(appName: string): string | null {
   return resolveWindowsAppPath(appName)
 }
 
-export function wslPath(path: string, mode: "windows" | "linux" | null): string {
+export function wslPath(path: string, mode: "windows" | "linux" | null, distro?: string | null): string {
   if (process.platform !== "win32") return path
 
   const flag = mode === "windows" ? "-w" : "-u"
@@ -21,15 +21,20 @@ export function wslPath(path: string, mode: "windows" | "linux" | null): string 
     if (path.startsWith("~")) {
       const suffix = path.slice(1)
       const cmd = `wslpath ${flag} "$HOME${suffix.replace(/"/g, '\\"')}"`
-      const output = execFileSync("wsl", ["-e", "sh", "-lc", cmd])
+      const output = execFileSync("wsl", inDistro(["sh", "-lc", cmd], distro))
       return output.toString().trim()
     }
 
-    const output = execFileSync("wsl", ["-e", "wslpath", flag, path])
+    const output = execFileSync("wsl", inDistro(["wslpath", flag, path], distro))
     return output.toString().trim()
   } catch (error) {
     throw new Error(`Failed to run wslpath: ${String(error)}`, { cause: error })
   }
+}
+
+function inDistro(args: string[], distro?: string | null) {
+  if (!distro) return ["-e", ...args]
+  return ["-d", distro, "--", ...args]
 }
 
 function checkMacosApp(appName: string) {

@@ -31,7 +31,7 @@ type Deps = {
   setDisplayBackend: (backend: string | null) => Promise<void> | void
   parseMarkdown: (markdown: string) => Promise<string> | string
   checkAppExists: (appName: string) => Promise<boolean> | boolean
-  wslPath: (path: string, mode: "windows" | "linux" | null) => Promise<string>
+  wslPath: (path: string, mode: "windows" | "linux" | null, distro?: string | null) => Promise<string>
   resolveAppPath: (appName: string) => Promise<string | null>
   loadingWindowComplete: () => void
   runUpdater: (alertOnFail: boolean) => Promise<void> | void
@@ -68,8 +68,10 @@ export function registerIpcHandlers(deps: Deps) {
   )
   ipcMain.handle("parse-markdown", (_event: IpcMainInvokeEvent, markdown: string) => deps.parseMarkdown(markdown))
   ipcMain.handle("check-app-exists", (_event: IpcMainInvokeEvent, appName: string) => deps.checkAppExists(appName))
-  ipcMain.handle("wsl-path", (_event: IpcMainInvokeEvent, path: string, mode: "windows" | "linux" | null) =>
-    deps.wslPath(path, mode),
+  ipcMain.handle(
+    "wsl-path",
+    (_event: IpcMainInvokeEvent, path: string, mode: "windows" | "linux" | null, distro?: string | null) =>
+      deps.wslPath(path, mode, distro),
   )
   ipcMain.handle("resolve-app-path", (_event: IpcMainInvokeEvent, appName: string) => deps.resolveAppPath(appName))
   ipcMain.on("loading-window-complete", () => deps.loadingWindowComplete())

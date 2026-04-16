@@ -57,17 +57,26 @@ const createPlatform = (): Platform => {
     return undefined
   })()
 
+  const wslDistro = async () => {
+    if (os !== "windows") return
+    const state = await window.api.localServer.getState().catch(() => null)
+    if (state?.config.mode !== "wsl") return
+    return state.config.distro
+  }
+
   const wslHome = async () => {
-    if (os !== "windows" || !window.__OPENCODE__?.wsl) return undefined
-    return window.api.wslPath("~", "windows").catch(() => undefined)
+    const distro = await wslDistro()
+    if (!distro) return undefined
+    return window.api.wslPath("~", "windows", distro).catch(() => undefined)
   }
 
   const handleWslPicker = async <T extends string | string[]>(result: T | null): Promise<T | null> => {
-    if (!result || !window.__OPENCODE__?.wsl) return result
+    const distro = await wslDistro()
+    if (!result || !distro) return result
     if (Array.isArray(result)) {
-      return Promise.all(result.map((path) => window.api.wslPath(path, "linux").catch(() => path))) as any
+      return Promise.all(result.map((path) => window.api.wslPath(path, "linux", distro).catch(() => path))) as any
     }
-    return window.api.wslPath(result, "linux").catch(() => result) as any
+    return window.api.wslPath(result, "linux", distro).catch(() => result) as any
   }
 
   const storage = (() => {
@@ -137,8 +146,9 @@ const createPlatform = (): Platform => {
       if (os === "windows") {
         const resolvedApp = app ? await window.api.resolveAppPath(app).catch(() => null) : null
         const resolvedPath = await (async () => {
-          if (window.__OPENCODE__?.wsl) {
-            const converted = await window.api.wslPath(path, "windows").catch(() => null)
+          const distro = await wslDistro()
+          if (distro) {
+            const converted = await window.api.wslPath(path, "windows", distro).catch(() => null)
             if (converted) return converted
           }
           return path
