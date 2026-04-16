@@ -7,6 +7,7 @@ export {
   type LocalServerConfig,
   type LocalServerEvent,
   type LocalServerMode,
+  type LocalServerOpencodeCheck,
   type LocalServerPlatform,
   type LocalServerState,
   type LocalServerStep,

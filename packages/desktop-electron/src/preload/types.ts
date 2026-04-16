@@ -45,6 +45,13 @@ export type LocalServerDistroCheck = {
   selected: LocalServerDistroProbe | null
   error: string | null
 }
+export type LocalServerOpencodeCheck = {
+  resolvedPath: string | null
+  version: string | null
+  expectedVersion: string | null
+  matchesDesktop: boolean | null
+  error: string | null
+}
 export type LocalServerTranscriptLine = {
   stream: "stdout" | "stderr" | "system"
   text: string
@@ -80,6 +87,7 @@ export type LocalServerState = {
   checks: {
     wsl: LocalServerWslCheck | null
     distro: LocalServerDistroCheck | null
+    opencode: LocalServerOpencodeCheck | null
   }
   transcript: LocalServerTranscriptLine[]
 }
@@ -94,6 +102,7 @@ export type LocalServerAPI = {
   cancelJob: () => Promise<void>
   installWsl: () => Promise<void>
   installDistro: (name: string) => Promise<void>
+  installOpencode: () => Promise<void>
   openTerminal: () => Promise<void>
   subscribe: (cb: (event: LocalServerEvent) => void) => () => void
 }

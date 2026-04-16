@@ -252,6 +252,56 @@ export function DialogLocalServer() {
               </Button>
             </div>
           </div>
+
+          <Show when={current()?.config.distro}>
+            <div class="rounded-md bg-surface-base p-4 flex flex-col gap-3">
+              <div class="flex items-center justify-between gap-3">
+                <div class="flex flex-col gap-1 min-w-0">
+                  <div class="text-14-medium text-text-strong">OpenCode</div>
+                  <div class="text-12-regular text-text-weak whitespace-pre-wrap break-words">
+                    {current()?.checks.opencode?.error ?? current()?.checks.opencode?.resolvedPath ?? "Not checked yet"}
+                  </div>
+                </div>
+                <div class="flex gap-2">
+                  <Button
+                    variant="secondary"
+                    size="large"
+                    disabled={busy()}
+                    onClick={() => void run(() => localServer()!.runStep("opencode"))}
+                  >
+                    Check OpenCode
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="large"
+                    disabled={busy()}
+                    onClick={() => void run(() => localServer()!.installOpencode())}
+                  >
+                    Install OpenCode
+                  </Button>
+                </div>
+              </div>
+
+              <Show when={current()?.checks.opencode}>
+                {(check) => (
+                  <div class="rounded-md border border-border-weak-base px-3 py-3 flex flex-col gap-1">
+                    <div class="text-12-regular text-text-weak">Path: {check().resolvedPath ?? "not found"}</div>
+                    <div class="text-12-regular text-text-weak">
+                      Version: {check().version ?? "unknown"}
+                      <Show when={check().expectedVersion}>
+                        {(expected) => <span>{` · desktop ${expected()}`}</span>}
+                      </Show>
+                    </div>
+                    <Show when={check().matchesDesktop === false}>
+                      <div class="text-12-regular text-text-warning-base">
+                        Installed version does not match the desktop app version.
+                      </div>
+                    </Show>
+                  </div>
+                )}
+              </Show>
+            </div>
+          </Show>
         </Show>
 
         <Show when={(current()?.transcript.length ?? 0) > 0}>

@@ -56,7 +56,7 @@ const loadingComplete = defer<void>()
 const pendingDeepLinks: string[] = []
 
 const serverReady = defer<ServerReadyData>()
-const localServer = createLocalServerController()
+const localServer = createLocalServerController(app.getVersion())
 const logger = initLogging()
 
 logger.log("app starting", {
@@ -257,6 +257,7 @@ registerIpcHandlers({
   cancelLocalServerJob: () => localServer.cancelJob(),
   installLocalServerWsl: () => localServer.installWsl(),
   installLocalServerDistro: (name) => localServer.installDistro(name),
+  installLocalServerOpencode: () => localServer.installOpencode(),
   openLocalServerTerminal: () => localServer.openTerminal(),
   onLocalServerEvent: (listener) => localServer.subscribe(listener),
   getDefaultServerUrl: () => getDefaultServerUrl(),

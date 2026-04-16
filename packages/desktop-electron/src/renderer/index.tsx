@@ -221,6 +221,7 @@ const createPlatform = (): Platform => {
       cancelJob: () => window.api.localServer.cancelJob(),
       installWsl: () => window.api.localServer.installWsl(),
       installDistro: (name) => window.api.localServer.installDistro(name),
+      installOpencode: () => window.api.localServer.installOpencode(),
       openTerminal: () => window.api.localServer.openTerminal(),
       subscribe: (cb) => window.api.localServer.subscribe(cb),
     },

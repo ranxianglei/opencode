@@ -161,6 +161,14 @@ export async function installWslDistro(name: string, opts?: RunWslOptions) {
   return runWsl(["--install", "-d", name, "--web-download", "--no-launch"], opts)
 }
 
+export async function installWslOpencode(version: string, distro: string, opts?: RunWslOptions) {
+  return runWslBash(
+    `curl -fsSL https://opencode.ai/install | bash -s -- --version ${shellEscape(version)}`,
+    distro,
+    opts,
+  )
+}
+
 export function wslNeedsRestart(result: WslCommandResult) {
   return /restart|reboot/i.test(`${result.stdout}\n${result.stderr}`)
 }
@@ -202,13 +210,13 @@ export async function probeWslDistro(name: string, opts?: RunWslOptions): Promis
   }
 }
 
-export async function resolveWslCommand(command: string, distro: string) {
-  const result = await runWslSh(`command -v ${shellEscape(command)} 2>/dev/null || true`, distro)
+export async function resolveWslCommand(command: string, distro: string, opts?: RunWslOptions) {
+  const result = await runWslSh(`command -v ${shellEscape(command)} 2>/dev/null || true`, distro, opts)
   return summarize(result.stdout) || null
 }
 
-export async function readWslCommandVersion(command: string, distro: string) {
-  const result = await runWslSh(`${shellEscape(command)} --version 2>/dev/null || true`, distro)
+export async function readWslCommandVersion(command: string, distro: string, opts?: RunWslOptions) {
+  const result = await runWslSh(`${shellEscape(command)} --version 2>/dev/null || true`, distro, opts)
   return firstLine(result.stdout)
 }
 

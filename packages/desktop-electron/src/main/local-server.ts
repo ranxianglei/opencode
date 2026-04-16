@@ -2,6 +2,7 @@ import type {
   LocalServerConfig,
   LocalServerDistroCheck,
   LocalServerEvent,
+  LocalServerOpencodeCheck,
   LocalServerState,
   LocalServerStep,
   LocalServerTranscriptLine,
@@ -10,12 +11,16 @@ import { LOCAL_SERVER_KEY } from "./constants"
 import { store } from "./store"
 import {
   installWslDistro,
+  installWslOpencode,
   installWslRuntimeElevated,
   listInstalledWslDistros,
   listOnlineWslDistros,
   openWslTerminal,
   probeWslDistro,
   probeWslRuntime,
+  readWslCommandVersion,
+  resolveWslCommand,
+  upgradeWslOpencode,
   wslNeedsRestart,
 } from "./wsl"
 
@@ -35,7 +40,7 @@ export function defaultLocalServerConfig(): LocalServerConfig {
   }
 }
 
-export function createLocalServerController() {
+export function createLocalServerController(appVersion: string) {
   let state = toState(readLocalServerConfig())
   const listeners = new Set<(event: LocalServerEvent) => void>()
   let jobAbort: AbortController | undefined
@@ -155,6 +160,42 @@ export function createLocalServerController() {
             checks: {
               ...state.checks,
               distro,
+            },
+          })
+          return
+        }
+
+        if (step === "opencode") {
+          if (!state.config.distro) {
+            update({
+              ...state,
+              job: null,
+              status: { kind: "failed", step, message: "No WSL distro selected" },
+            })
+            return
+          }
+
+          const resolvedPath = await resolveWslCommand("opencode", state.config.distro, {
+            signal: abort.signal,
+            onLine: (line) => appendTranscript(line),
+          })
+          if (jobAbort !== abort) return
+          const version = resolvedPath
+            ? await readWslCommandVersion(resolvedPath, state.config.distro, {
+                signal: abort.signal,
+                onLine: (line) => appendTranscript(line),
+              })
+            : null
+          if (jobAbort !== abort) return
+
+          const opencode = opencodeCheck(resolvedPath, version, appVersion)
+          update({
+            ...state,
+            job: null,
+            status: opencode.error ? { kind: "failed", step, message: opencode.error } : { kind: "ready" },
+            checks: {
+              ...state.checks,
+              opencode,
             },
           })
           return
@@ -389,6 +430,80 @@ export function createLocalServerController() {
         if (jobAbort === abort) jobAbort = undefined
       }
     },
+    async installOpencode() {
+      if (!state.config.distro) throw new Error("No WSL distro selected")
+      jobAbort?.abort()
+      const abort = new AbortController()
+      jobAbort = abort
+      clearTranscript()
+      appendTranscript({ stream: "system", text: `Installing OpenCode in ${state.config.distro}` })
+      update({
+        ...state,
+        job: { step: "opencode", startedAt: Date.now() },
+        status: { kind: "running", step: "opencode" },
+      })
+
+      try {
+        const resolvedPath = await resolveWslCommand("opencode", state.config.distro, {
+          signal: abort.signal,
+          onLine: (line) => appendTranscript(line),
+        })
+        if (jobAbort !== abort) return
+
+        const result = resolvedPath
+          ? await upgradeWslOpencode(appVersion, state.config.distro, {
+              signal: abort.signal,
+              onLine: (line) => appendTranscript(line),
+            })
+          : await installWslOpencode(appVersion, state.config.distro, {
+              signal: abort.signal,
+              onLine: (line) => appendTranscript(line),
+            })
+        if (jobAbort !== abort) return
+        if (result.code !== 0) throw new Error(commandFailure(result, "OpenCode installation failed"))
+
+        const nextPath = await resolveWslCommand("opencode", state.config.distro, {
+          signal: abort.signal,
+          onLine: (line) => appendTranscript(line),
+        })
+        if (jobAbort !== abort) return
+        const version = nextPath
+          ? await readWslCommandVersion(nextPath, state.config.distro, {
+              signal: abort.signal,
+              onLine: (line) => appendTranscript(line),
+            })
+          : null
+        if (jobAbort !== abort) return
+
+        const opencode = opencodeCheck(nextPath, version, appVersion)
+        update({
+          ...state,
+          job: null,
+          status: opencode.error ? { kind: "failed", step: "opencode", message: opencode.error } : { kind: "ready" },
+          checks: {
+            ...state.checks,
+            opencode,
+          },
+        })
+      } catch (error) {
+        if (jobAbort !== abort) return
+        if (error instanceof Error && error.name === "AbortError") {
+          update({
+            ...state,
+            job: null,
+            status: { kind: "idle" },
+          })
+          return
+        }
+        update({
+          ...state,
+          job: null,
+          status: { kind: "failed", step: "opencode", message: error instanceof Error ? error.message : String(error) },
+        })
+      } finally {
+        if (jobAbort === abort) jobAbort = undefined
+      }
+    },
     async openTerminal() {
       if (!state.config.distro) throw new Error("No WSL distro selected")
       await openWslTerminal(state.config.distro)
@@ -418,7 +533,7 @@ function toState(config: LocalServerConfig, current?: LocalServerState): LocalSe
     runtime: current?.runtime ?? windowsRuntime(),
     status: current?.status ?? { kind: "idle" },
     job: current?.job ?? null,
-    checks: current?.checks ?? { wsl: null, distro: null },
+    checks: current?.checks ?? { wsl: null, distro: null, opencode: null },
     transcript: current?.transcript ?? [],
   }
 }
@@ -516,4 +631,27 @@ function commandFailure(result: { stdout: string; stderr: string }, fallback: st
     .filter(Boolean)
     .join("\n")
   return output || fallback
+}
+
+function opencodeCheck(
+  resolvedPath: string | null,
+  version: string | null,
+  expectedVersion: string,
+): LocalServerOpencodeCheck {
+  if (!resolvedPath) {
+    return {
+      resolvedPath: null,
+      version: null,
+      expectedVersion,
+      matchesDesktop: null,
+      error: "opencode is not installed in the selected distro",
+    }
+  }
+  return {
+    resolvedPath,
+    version,
+    expectedVersion,
+    matchesDesktop: version ? version === expectedVersion : null,
+    error: null,
+  }
 }
