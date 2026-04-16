@@ -191,6 +191,21 @@ export async function upgradeWslOpencode(target: string, distro: string, opts?: 
   return runWslBash(`opencode upgrade ${shellEscape(target)}`, distro, opts)
 }
 
+export function openWslTerminal(distro?: string | null) {
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn("cmd.exe", ["/c", "start", "", "wsl", ...(distro ? ["-d", distro] : [])], {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    })
+    child.once("error", reject)
+    child.once("spawn", () => {
+      child.unref()
+      resolve()
+    })
+  })
+}
+
 function parseInstalledDistros(output: string) {
   return output.split(/\r?\n/g).flatMap((line) => {
     const trimmed = line.trim()

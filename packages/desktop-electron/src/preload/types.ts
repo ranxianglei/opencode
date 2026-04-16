@@ -45,6 +45,11 @@ export type LocalServerDistroCheck = {
   selected: LocalServerDistroProbe | null
   error: string | null
 }
+export type LocalServerTranscriptLine = {
+  stream: "stdout" | "stderr" | "system"
+  text: string
+  at: number
+}
 export type LocalServerConfig = {
   mode: LocalServerMode
   distro: string | null
@@ -76,6 +81,7 @@ export type LocalServerState = {
     wsl: LocalServerWslCheck | null
     distro: LocalServerDistroCheck | null
   }
+  transcript: LocalServerTranscriptLine[]
 }
 export type LocalServerEvent = {
   type: "state"
@@ -86,6 +92,7 @@ export type LocalServerAPI = {
   setConfig: (config: LocalServerConfig) => Promise<void>
   runStep: (step: LocalServerStep) => Promise<void>
   cancelJob: () => Promise<void>
+  openTerminal: () => Promise<void>
   subscribe: (cb: (event: LocalServerEvent) => void) => () => void
 }
 

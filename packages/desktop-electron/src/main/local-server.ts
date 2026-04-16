@@ -4,10 +4,11 @@ import type {
   LocalServerEvent,
   LocalServerState,
   LocalServerStep,
+  LocalServerTranscriptLine,
 } from "../preload/types"
 import { LOCAL_SERVER_KEY } from "./constants"
 import { store } from "./store"
-import { listInstalledWslDistros, listOnlineWslDistros, probeWslDistro, probeWslRuntime } from "./wsl"
+import { listInstalledWslDistros, listOnlineWslDistros, openWslTerminal, probeWslDistro, probeWslRuntime } from "./wsl"
 
 export function defaultLocalServerConfig(): LocalServerConfig {
   return {
@@ -39,6 +40,20 @@ export function createLocalServerController() {
     emit({ type: "state", state })
   }
 
+  const appendTranscript = (line: Omit<LocalServerTranscriptLine, "at">) => {
+    update({
+      ...state,
+      transcript: [...state.transcript, { ...line, at: Date.now() }],
+    })
+  }
+
+  const clearTranscript = () => {
+    update({
+      ...state,
+      transcript: [],
+    })
+  }
+
   return {
     getState() {
       return state
@@ -59,6 +74,8 @@ export function createLocalServerController() {
       jobAbort?.abort()
       const abort = new AbortController()
       jobAbort = abort
+      clearTranscript()
+      appendTranscript({ stream: "system", text: `Running local server step: ${step}` })
       update({
         ...state,
         job: { step, startedAt: Date.now() },
@@ -67,7 +84,10 @@ export function createLocalServerController() {
 
       try {
         if (step === "wsl") {
-          const wsl = await probeWslRuntime({ signal: abort.signal })
+          const wsl = await probeWslRuntime({
+            signal: abort.signal,
+            onLine: (line) => appendTranscript(line),
+          })
           if (jobAbort !== abort) return
           update({
             ...state,
@@ -85,15 +105,24 @@ export function createLocalServerController() {
 
         if (step === "distro") {
           const [installedResult, onlineResult] = await Promise.allSettled([
-            listInstalledWslDistros({ signal: abort.signal }),
-            listOnlineWslDistros({ signal: abort.signal }),
+            listInstalledWslDistros({
+              signal: abort.signal,
+              onLine: (line) => appendTranscript(line),
+            }),
+            listOnlineWslDistros({
+              signal: abort.signal,
+              onLine: (line) => appendTranscript(line),
+            }),
           ])
           if (jobAbort !== abort) return
 
           const installed = installedResult.status === "fulfilled" ? installedResult.value : []
           const online = onlineResult.status === "fulfilled" ? onlineResult.value : []
           const selected = state.config.distro
-            ? await probeWslDistro(state.config.distro, { signal: abort.signal })
+            ? await probeWslDistro(state.config.distro, {
+                signal: abort.signal,
+                onLine: (line) => appendTranscript(line),
+              })
             : null
           if (jobAbort !== abort) return
 
@@ -144,11 +173,16 @@ export function createLocalServerController() {
     cancelJob() {
       jobAbort?.abort()
       jobAbort = undefined
+      appendTranscript({ stream: "system", text: "Canceled local server job" })
       update({
         ...state,
         job: null,
         status: { kind: "idle" },
       })
+    },
+    async openTerminal() {
+      if (!state.config.distro) throw new Error("No WSL distro selected")
+      await openWslTerminal(state.config.distro)
     },
     setRuntime(runtime: LocalServerState["runtime"]) {
       update({
@@ -176,6 +210,7 @@ function toState(config: LocalServerConfig, current?: LocalServerState): LocalSe
     status: current?.status ?? { kind: "idle" },
     job: current?.job ?? null,
     checks: current?.checks ?? { wsl: null, distro: null },
+    transcript: current?.transcript ?? [],
   }
 }
 

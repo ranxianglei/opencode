@@ -255,6 +255,7 @@ registerIpcHandlers({
   setLocalServerConfig: (config) => localServer.setConfig(config),
   runLocalServerStep: (step) => localServer.runStep(step),
   cancelLocalServerJob: () => localServer.cancelJob(),
+  openLocalServerTerminal: () => localServer.openTerminal(),
   onLocalServerEvent: (listener) => localServer.subscribe(listener),
   getDefaultServerUrl: () => getDefaultServerUrl(),
   setDefaultServerUrl: (url) => setDefaultServerUrl(url),

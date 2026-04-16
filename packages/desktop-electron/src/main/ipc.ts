@@ -27,6 +27,7 @@ type Deps = {
   setLocalServerConfig: (config: LocalServerConfig) => Promise<void> | void
   runLocalServerStep: (step: LocalServerStep) => Promise<void> | void
   cancelLocalServerJob: () => Promise<void> | void
+  openLocalServerTerminal: () => Promise<void> | void
   onLocalServerEvent: (listener: (event: LocalServerEvent) => void) => () => void
   getDefaultServerUrl: () => Promise<string | null> | string | null
   setDefaultServerUrl: (url: string | null) => Promise<void> | void
@@ -61,6 +62,11 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("local-server-set-config", (_event: IpcMainInvokeEvent, config: LocalServerConfig) =>
     deps.setLocalServerConfig(config),
   )
+  ipcMain.handle("local-server-run-step", (_event: IpcMainInvokeEvent, step: LocalServerStep) =>
+    deps.runLocalServerStep(step),
+  )
+  ipcMain.handle("local-server-cancel-job", () => deps.cancelLocalServerJob())
+  ipcMain.handle("local-server-open-terminal", () => deps.openLocalServerTerminal())
   ipcMain.handle("get-default-server-url", () => deps.getDefaultServerUrl())
   ipcMain.handle("set-default-server-url", (_event: IpcMainInvokeEvent, url: string | null) =>
     deps.setDefaultServerUrl(url),
