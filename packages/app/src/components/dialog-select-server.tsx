@@ -479,6 +479,11 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     setStore("localServer", "showPage", true)
   }
 
+  const localSwapLabel = (conn: ServerConnection.Any) => {
+    if (conn.type !== "sidecar") return ""
+    return conn.variant === "wsl" ? "Swap to Windows" : "Swap to WSL"
+  }
+
   const submitForm = () => {
     if (mode() === "add") {
       if (addMutation.isPending) return
@@ -558,114 +563,111 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
             </Show>
           }
         >
-          <div class="flex flex-col gap-3">
-            <Show when={platform.localServer}>
-              <div class="px-5">
-                <button
-                  type="button"
-                  class="w-full rounded-md bg-surface-base px-4 py-3 text-left transition-colors hover:bg-surface-base-hover"
-                  onClick={startLocal}
-                >
-                  <div class="text-14-medium text-text-strong">Local Server</div>
-                  <div class="text-12-regular text-text-weak">Configure Windows or WSL local runtime</div>
-                </button>
-              </div>
-            </Show>
-
-            <List
-              search={{
-                placeholder: language.t("dialog.server.search.placeholder"),
-                autofocus: false,
-              }}
-              noInitialSelection
-              emptyMessage={language.t("dialog.server.empty")}
-              items={sortedItems}
-              key={(x) => x.http.url}
-              onSelect={(x) => {
-                if (x) void select(x)
-              }}
-              divider={true}
-              class="px-5 [&_[data-slot=list-search-wrapper]]:w-full [&_[data-slot=list-scroll]]h-[300px] [&_[data-slot=list-scroll]]:overflow-y-auto [&_[data-slot=list-items]]:bg-surface-base [&_[data-slot=list-items]]:rounded-md [&_[data-slot=list-item]]:min-h-14 [&_[data-slot=list-item]]:p-3 [&_[data-slot=list-item]]:!bg-transparent"
-            >
-              {(i) => {
-                const key = ServerConnection.key(i)
-                return (
-                  <div class="flex items-center gap-3 min-w-0 flex-1 w-full group/item">
-                    <div class="flex flex-col h-full items-start w-5">
-                      <ServerHealthIndicator health={store.status[key]} />
-                    </div>
-                    <ServerRow
-                      conn={i}
-                      dimmed={store.status[key]?.healthy === false}
-                      status={store.status[key]}
-                      class="flex items-center gap-3 min-w-0 flex-1"
-                      badge={
-                        <Show when={defaultKey() === ServerConnection.key(i)}>
-                          <span class="text-text-base bg-surface-base text-14-regular px-1.5 rounded-xs">
-                            {language.t("dialog.server.status.default")}
-                          </span>
-                        </Show>
-                      }
-                      showCredentials
-                    />
-                    <div class="flex items-center justify-center gap-4 pl-4">
-                      <Show when={ServerConnection.key(current()) === key}>
-                        <Icon name="check" class="h-6" />
+          <List
+            search={{
+              placeholder: language.t("dialog.server.search.placeholder"),
+              autofocus: false,
+            }}
+            noInitialSelection
+            emptyMessage={language.t("dialog.server.empty")}
+            items={sortedItems}
+            key={(x) => x.http.url}
+            onSelect={(x) => {
+              if (x) void select(x)
+            }}
+            divider={true}
+            class="px-5 [&_[data-slot=list-search-wrapper]]:w-full [&_[data-slot=list-scroll]]h-[300px] [&_[data-slot=list-scroll]]:overflow-y-auto [&_[data-slot=list-items]]:bg-surface-base [&_[data-slot=list-items]]:rounded-md [&_[data-slot=list-item]]:min-h-14 [&_[data-slot=list-item]]:p-3 [&_[data-slot=list-item]]:!bg-transparent"
+          >
+            {(i) => {
+              const key = ServerConnection.key(i)
+              return (
+                <div class="flex items-center gap-3 min-w-0 flex-1 w-full group/item">
+                  <div class="flex flex-col h-full items-start w-5">
+                    <ServerHealthIndicator health={store.status[key]} />
+                  </div>
+                  <ServerRow
+                    conn={i}
+                    dimmed={store.status[key]?.healthy === false}
+                    status={store.status[key]}
+                    class="flex items-center gap-3 min-w-0 flex-1"
+                    badge={
+                      <Show when={defaultKey() === ServerConnection.key(i)}>
+                        <span class="text-text-base bg-surface-base text-14-regular px-1.5 rounded-xs">
+                          {language.t("dialog.server.status.default")}
+                        </span>
                       </Show>
+                    }
+                    showCredentials
+                  />
+                  <div class="flex items-center justify-center gap-3 pl-4">
+                    <Show when={platform.localServer && i.type === "sidecar"}>
+                      <Button
+                        variant="secondary"
+                        size="small"
+                        class="shrink-0"
+                        onClick={(event: MouseEvent) => {
+                          event.stopPropagation()
+                          startLocal()
+                        }}
+                      >
+                        {localSwapLabel(i)}
+                      </Button>
+                    </Show>
 
-                      <Show when={i.type === "http"}>
-                        <DropdownMenu>
-                          <DropdownMenu.Trigger
-                            as={IconButton}
-                            icon="dot-grid"
-                            variant="ghost"
-                            class="shrink-0 size-8 hover:bg-surface-base-hover data-[expanded]:bg-surface-base-active"
-                            onClick={(e: MouseEvent) => e.stopPropagation()}
-                            onPointerDown={(e: PointerEvent) => e.stopPropagation()}
-                          />
-                          <DropdownMenu.Portal>
-                            <DropdownMenu.Content class="mt-1">
-                              <DropdownMenu.Item
-                                onSelect={() => {
-                                  if (i.type !== "http") return
-                                  startEdit(i)
-                                }}
-                              >
-                                <DropdownMenu.ItemLabel>{language.t("dialog.server.menu.edit")}</DropdownMenu.ItemLabel>
-                              </DropdownMenu.Item>
-                              <Show when={canDefault() && defaultKey() !== key}>
-                                <DropdownMenu.Item onSelect={() => setDefault(key)}>
-                                  <DropdownMenu.ItemLabel>
-                                    {language.t("dialog.server.menu.default")}
-                                  </DropdownMenu.ItemLabel>
-                                </DropdownMenu.Item>
-                              </Show>
-                              <Show when={canDefault() && defaultKey() === key}>
-                                <DropdownMenu.Item onSelect={() => setDefault(null)}>
-                                  <DropdownMenu.ItemLabel>
-                                    {language.t("dialog.server.menu.defaultRemove")}
-                                  </DropdownMenu.ItemLabel>
-                                </DropdownMenu.Item>
-                              </Show>
-                              <DropdownMenu.Separator />
-                              <DropdownMenu.Item
-                                onSelect={() => handleRemove(ServerConnection.key(i))}
-                                class="text-text-on-critical-base hover:bg-surface-critical-weak"
-                              >
+                    <Show when={ServerConnection.key(current()) === key}>
+                      <Icon name="check" class="h-6" />
+                    </Show>
+
+                    <Show when={i.type === "http"}>
+                      <DropdownMenu>
+                        <DropdownMenu.Trigger
+                          as={IconButton}
+                          icon="dot-grid"
+                          variant="ghost"
+                          class="shrink-0 size-8 hover:bg-surface-base-hover data-[expanded]:bg-surface-base-active"
+                          onClick={(e: MouseEvent) => e.stopPropagation()}
+                          onPointerDown={(e: PointerEvent) => e.stopPropagation()}
+                        />
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.Content class="mt-1">
+                            <DropdownMenu.Item
+                              onSelect={() => {
+                                if (i.type !== "http") return
+                                startEdit(i)
+                              }}
+                            >
+                              <DropdownMenu.ItemLabel>{language.t("dialog.server.menu.edit")}</DropdownMenu.ItemLabel>
+                            </DropdownMenu.Item>
+                            <Show when={canDefault() && defaultKey() !== key}>
+                              <DropdownMenu.Item onSelect={() => setDefault(key)}>
                                 <DropdownMenu.ItemLabel>
-                                  {language.t("dialog.server.menu.delete")}
+                                  {language.t("dialog.server.menu.default")}
                                 </DropdownMenu.ItemLabel>
                               </DropdownMenu.Item>
-                            </DropdownMenu.Content>
-                          </DropdownMenu.Portal>
-                        </DropdownMenu>
-                      </Show>
-                    </div>
+                            </Show>
+                            <Show when={canDefault() && defaultKey() === key}>
+                              <DropdownMenu.Item onSelect={() => setDefault(null)}>
+                                <DropdownMenu.ItemLabel>
+                                  {language.t("dialog.server.menu.defaultRemove")}
+                                </DropdownMenu.ItemLabel>
+                              </DropdownMenu.Item>
+                            </Show>
+                            <DropdownMenu.Separator />
+                            <DropdownMenu.Item
+                              onSelect={() => handleRemove(ServerConnection.key(i))}
+                              class="text-text-on-critical-base hover:bg-surface-critical-weak"
+                            >
+                              <DropdownMenu.ItemLabel>{language.t("dialog.server.menu.delete")}</DropdownMenu.ItemLabel>
+                            </DropdownMenu.Item>
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu>
+                    </Show>
                   </div>
-                )
-              }}
-            </List>
-          </div>
+                </div>
+              )
+            }}
+          </List>
         </Show>
 
         <div class="px-5 pb-5">
