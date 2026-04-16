@@ -36,13 +36,14 @@ const { autoUpdater } = pkg
 
 import type { InitStep, ServerReadyData, SqliteMigrationProgress } from "../preload/types"
 import { checkAppExists, resolveAppPath, wslPath } from "./apps"
-import { CHANNEL, UPDATER_ENABLED } from "./constants"
+import { CHANNEL, LOCAL_SERVER_KEY, UPDATER_ENABLED } from "./constants"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand, sendSqliteMigrationProgress } from "./ipc"
 import { createLocalServerController } from "./local-server"
 import { initLogging } from "./logging"
 import { parseMarkdown } from "./markdown"
 import { createMenu } from "./menu"
 import { getDefaultServerUrl, setDefaultServerUrl, spawnLocalServer, spawnWslLocalServer } from "./server"
+import { store } from "./store"
 import { createLoadingWindow, createMainWindow, setBackgroundColor, setDockIcon } from "./windows"
 
 const initEmitter = new EventEmitter()
@@ -62,6 +63,12 @@ const logger = initLogging()
 logger.log("app starting", {
   version: app.getVersion(),
   packaged: app.isPackaged,
+})
+logger.log("config paths", {
+  userData: app.getPath("userData"),
+  settingsStore: store.path,
+  localServerKey: LOCAL_SERVER_KEY,
+  localServer: store.get(LOCAL_SERVER_KEY) ?? null,
 })
 
 setupApp()
@@ -176,12 +183,12 @@ async function initialize() {
     try {
       if (runtime.mode === "wsl") {
         if (!runtime.distro) throw new Error("No WSL distro selected")
-        return spawnWslLocalServer(runtime.distro, port, password, {
+        return await spawnWslLocalServer(runtime.distro, port, password, {
           onLine: (line) =>
             logger.log("wsl sidecar startup", { distro: runtime.distro, stream: line.stream, text: line.text }),
         })
       }
-      return spawnLocalServer(hostname, port, password)
+      return await spawnLocalServer(hostname, port, password)
     } catch (error) {
       startupError = asError(error)
       localServer.setStatus({
