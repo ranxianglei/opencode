@@ -8,7 +8,7 @@ import { Spinner } from "@opencode-ai/ui/spinner"
 import { showToast } from "@opencode-ai/ui/toast"
 import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
 import { getFilename } from "@opencode-ai/shared/util/path"
-import { createEffect, createMemo, createSignal, For, onMount, Show } from "solid-js"
+import { createEffect, createMemo, For, onCleanup, onMount, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Portal } from "solid-js/web"
 import { useCommand } from "@/context/command"
@@ -129,6 +129,13 @@ const showRequestError = (language: ReturnType<typeof useLanguage>, err: unknown
   })
 }
 
+function titlebarMounts() {
+  return {
+    center: document.getElementById("opencode-titlebar-center") as HTMLDivElement | undefined,
+    right: document.getElementById("opencode-titlebar-right") as HTMLDivElement | undefined,
+  }
+}
+
 export function SessionHeader() {
   const layout = useLayout()
   const command = useCommand()
@@ -219,6 +226,7 @@ export function SessionHeader() {
   const [openRequest, setOpenRequest] = createStore({
     app: undefined as OpenApp | undefined,
   })
+  const [mounts, setMounts] = createStore(titlebarMounts())
 
   const canOpen = createMemo(() => platform.platform === "desktop" && !!platform.openPath && server.isLocal())
   const current = createMemo(
@@ -231,6 +239,19 @@ export function SessionHeader() {
   const tint = createMemo(() =>
     messageAgentColor(params.id ? sync.data.message[params.id] : undefined, sync.data.agent),
   )
+
+  const syncMounts = () => {
+    const next = titlebarMounts()
+    if (mounts.center === next.center && mounts.right === next.right) return
+    setMounts(next)
+  }
+
+  onMount(() => {
+    syncMounts()
+    const observer = new MutationObserver(() => syncMounts())
+    observer.observe(document.body, { childList: true, subtree: true })
+    onCleanup(() => observer.disconnect())
+  })
 
   const selectApp = (app: OpenApp) => {
     if (!options().some((item) => item.id === app)) return
@@ -269,12 +290,8 @@ export function SessionHeader() {
       .catch((err: unknown) => showRequestError(language, err))
   }
 
-  const [centerMount, setCenterMount] = createSignal<HTMLElement | null>(null)
-  const [rightMount, setRightMount] = createSignal<HTMLElement | null>(null)
-  onMount(() => {
-    setCenterMount(document.getElementById("opencode-titlebar-center"))
-    setRightMount(document.getElementById("opencode-titlebar-right"))
-  })
+  const centerMount = createMemo(() => mounts.center)
+  const rightMount = createMemo(() => mounts.right)
 
   return (
     <>
