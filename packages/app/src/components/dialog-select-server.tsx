@@ -5,6 +5,7 @@ import { DropdownMenu } from "@opencode-ai/ui/dropdown-menu"
 import { Icon } from "@opencode-ai/ui/icon"
 import { IconButton } from "@opencode-ai/ui/icon-button"
 import { List } from "@opencode-ai/ui/list"
+import { Popover } from "@opencode-ai/ui/popover"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { useMutation } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
@@ -13,7 +14,7 @@ import { createStore, reconcile } from "solid-js/store"
 import { DialogLocalServer } from "@/components/dialog-local-server"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
 import { useLanguage } from "@/context/language"
-import { usePlatform } from "@/context/platform"
+import { type LocalServerConfig, usePlatform } from "@/context/platform"
 import { normalizeServerUrl, ServerConnection, useServer } from "@/context/server"
 import { type ServerHealth, useCheckServerHealth } from "@/utils/server-health"
 
@@ -199,6 +200,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     localServer: {
       showPage: props.initialView === "local",
       targetMode: props.initialTargetMode as "windows" | "wsl" | undefined,
+      confirmSwapKey: undefined as ServerConnection.Key | undefined,
     },
     editServer: {
       id: undefined as string | undefined,
@@ -480,6 +482,50 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     resetEdit()
     setStore("localServer", "showPage", true)
     setStore("localServer", "targetMode", targetMode)
+    setStore("localServer", "confirmSwapKey", undefined)
+  }
+
+  const plainConfig = (config: LocalServerConfig): LocalServerConfig => structuredClone(config)
+
+  const swapLocalToWindows = async () => {
+    const localServer = platform.localServer
+    if (!localServer) return
+
+    try {
+      const state = await localServer.getState()
+      const config = plainConfig(state.config)
+      await localServer.setConfig({
+        ...config,
+        mode: "windows",
+        distro: null,
+        onboarding: {
+          ...config.onboarding,
+          complete: true,
+          pendingRestart: false,
+          step: null,
+        },
+      })
+      setStore("localServer", "confirmSwapKey", undefined)
+      showToast({
+        variant: "success",
+        title: "Local Server set to Windows",
+        description: "Restart OpenCode to finish switching back to Windows.",
+        persistent: true,
+        actions: [
+          {
+            label: "Restart",
+            onClick: () => void platform.restart(),
+          },
+        ],
+      })
+    } catch (err) {
+      console.error("Local Server request failed", err instanceof Error ? (err.stack ?? err.message) : String(err))
+      showToast({
+        variant: "error",
+        title: language.t("common.requestFailed"),
+        description: err instanceof Error ? err.message : String(err),
+      })
+    }
   }
 
   const localSwapLabel = (conn: ServerConnection.Any) => {
@@ -609,17 +655,77 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                   />
                   <div class="flex items-center justify-center gap-3 pl-4">
                     <Show when={platform.localServer && i.type === "sidecar"}>
-                      <Button
-                        variant="secondary"
-                        size="small"
-                        class="shrink-0"
-                        onClick={(event: MouseEvent) => {
-                          event.stopPropagation()
-                          startLocal(localSwapTarget(i))
-                        }}
-                      >
-                        {localSwapLabel(i)}
-                      </Button>
+                      {(() => {
+                        const sidecar = i as ServerConnection.Sidecar
+                        if (sidecar.variant !== "wsl") {
+                          return (
+                            <Button
+                              variant="secondary"
+                              size="small"
+                              class="shrink-0"
+                              onClick={(event: MouseEvent) => {
+                                event.stopPropagation()
+                                startLocal(localSwapTarget(sidecar))
+                              }}
+                            >
+                              {localSwapLabel(sidecar)}
+                            </Button>
+                          )
+                        }
+
+                        return (
+                          <Popover
+                            open={store.localServer.confirmSwapKey === ServerConnection.key(sidecar)}
+                            onOpenChange={(open) =>
+                              setStore(
+                                "localServer",
+                                "confirmSwapKey",
+                                open ? ServerConnection.key(sidecar) : undefined,
+                              )
+                            }
+                            triggerAs={Button}
+                            triggerProps={{
+                              variant: "secondary",
+                              size: "small",
+                              class: "shrink-0",
+                              onClick: (event: MouseEvent) => event.stopPropagation(),
+                              onPointerDown: (event: PointerEvent) => event.stopPropagation(),
+                            }}
+                            trigger={localSwapLabel(sidecar)}
+                            placement="bottom-end"
+                            portal={false}
+                          >
+                            <div class="flex flex-col gap-3">
+                              <div class="text-13-medium text-text-strong">Use Windows instead?</div>
+                              <div class="text-12-regular text-text-weak">
+                                Restart OpenCode after switching the Local Server back to Windows.
+                              </div>
+                              <div class="flex items-center justify-end gap-2">
+                                <Button
+                                  variant="ghost"
+                                  size="small"
+                                  onClick={(event: MouseEvent) => {
+                                    event.stopPropagation()
+                                    setStore("localServer", "confirmSwapKey", undefined)
+                                  }}
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  variant="secondary"
+                                  size="small"
+                                  onClick={(event: MouseEvent) => {
+                                    event.stopPropagation()
+                                    void swapLocalToWindows()
+                                  }}
+                                >
+                                  Use Windows
+                                </Button>
+                              </div>
+                            </div>
+                          </Popover>
+                        )
+                      })()}
                     </Show>
 
                     <Show when={ServerConnection.key(current()) === key}>
