@@ -1,5 +1,7 @@
 import "@/index.css"
+import { Button } from "@opencode-ai/ui/button"
 import { I18nProvider } from "@opencode-ai/ui/context"
+import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { DialogProvider } from "@opencode-ai/ui/context/dialog"
 import { FileComponentProvider } from "@opencode-ai/ui/context/file"
 import { MarkedProvider } from "@opencode-ai/ui/context/marked"
@@ -37,6 +39,7 @@ import { LayoutProvider } from "@/context/layout"
 import { ModelsProvider } from "@/context/models"
 import { NotificationProvider } from "@/context/notification"
 import { PermissionProvider } from "@/context/permission"
+import { usePlatform } from "@/context/platform"
 import { PromptProvider } from "@/context/prompt"
 import { ServerConnection, ServerProvider, serverName, useServer } from "@/context/server"
 import { SettingsProvider } from "@/context/settings"
@@ -223,12 +226,15 @@ function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean }>) {
 }
 
 function ConnectionError(props: { onRetry?: () => void; onServerSelected?: (key: ServerConnection.Key) => void }) {
+  const dialog = useDialog()
   const language = useLanguage()
+  const platform = usePlatform()
   const server = useServer()
   const others = () => server.list.filter((s) => ServerConnection.key(s) !== server.key)
   const name = createMemo(() => server.name || server.key)
   const serverToken = "\u0000server\u0000"
   const unreachable = createMemo(() => language.t("app.server.unreachable", { server: serverToken }).split(serverToken))
+  const canOpenLocalServer = createMemo(() => !!platform.localServer && server.current?.type === "sidecar")
 
   const timer = setInterval(() => props.onRetry?.(), 1000)
   onCleanup(() => clearInterval(timer))
@@ -243,6 +249,20 @@ function ConnectionError(props: { onRetry?: () => void; onServerSelected?: (key:
           {unreachable()[1]}
         </p>
         <p class="mt-1 text-12-regular text-text-weak">{language.t("app.server.retrying")}</p>
+        <Show when={canOpenLocalServer()}>
+          <Button
+            variant="secondary"
+            size="large"
+            class="mt-4"
+            onClick={() => {
+              void import("@/components/dialog-select-server").then((x) => {
+                dialog.show(() => <x.DialogSelectServer initialView="local" />)
+              })
+            }}
+          >
+            Open Local Server
+          </Button>
+        </Show>
       </div>
       <Show when={others().length > 0}>
         <div class="flex flex-col gap-2 w-full max-w-sm">

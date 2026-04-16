@@ -20,6 +20,10 @@ import { type ServerHealth, useCheckServerHealth } from "@/utils/server-health"
 
 const DEFAULT_USERNAME = "opencode"
 
+interface DialogSelectServerProps {
+  initialView?: "list" | "local"
+}
+
 interface ServerFormProps {
   value: string
   name: string
@@ -172,7 +176,7 @@ function ServerForm(props: ServerFormProps) {
   )
 }
 
-export function DialogSelectServer() {
+export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   const navigate = useNavigate()
   const dialog = useDialog()
   const server = useServer()
@@ -193,7 +197,7 @@ export function DialogSelectServer() {
       status: undefined as boolean | undefined,
     },
     localServer: {
-      showPage: false,
+      showPage: props.initialView === "local",
     },
     editServer: {
       id: undefined as string | undefined,
