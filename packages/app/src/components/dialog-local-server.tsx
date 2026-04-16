@@ -119,7 +119,7 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
   })
   const opencodeReady = createMemo(() => {
     const check = opencodeCheck()
-    return !!check?.resolvedPath && !check.error && check.matchesDesktop !== false
+    return !!check?.resolvedPath && !check.error
   })
   const switchReady = createMemo(() => wslReady() && distroReady() && opencodeReady())
   const recommendedStep = createMemo<LocalServerStep>(() => {
@@ -285,6 +285,7 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
         wslReady: wslReady(),
         distroReady: distroReady(),
         opencodeReady: opencodeReady(),
+        opencodeMismatch: opencodeCheck()?.matchesDesktop === false,
         switchReady: switchReady(),
         needsRestart: needsRestart(),
       }),
@@ -632,6 +633,7 @@ function stepState(
     wslReady: boolean
     distroReady: boolean
     opencodeReady: boolean
+    opencodeMismatch: boolean
     switchReady: boolean
     needsRestart: boolean
   },
@@ -641,7 +643,13 @@ function stepState(
   if (step === "distro")
     return state.distroReady ? "done" : stepIndex(step) > stepIndex(state.active) ? "locked" : "warning"
   if (step === "opencode")
-    return state.opencodeReady ? "done" : stepIndex(step) > stepIndex(state.active) ? "locked" : "warning"
+    return state.opencodeMismatch
+      ? "warning"
+      : state.opencodeReady
+        ? "done"
+        : stepIndex(step) > stepIndex(state.active)
+          ? "locked"
+          : "warning"
   if (state.switchReady && !state.needsRestart) return "done"
   if (stepIndex(step) > stepIndex(state.active)) return "locked"
   return "warning"
