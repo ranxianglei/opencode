@@ -1209,7 +1209,7 @@ export default function Layout(props: ParentProps) {
     const run = ++dialogRun
     void import("@/components/dialog-select-server").then((x) => {
       if (dialogDead || dialogRun !== run) return
-      dialog.show(() => <x.DialogSelectServer />)
+      dialog.show(() => <x.DialogSelectServer onNavigateHome={() => navigate("/")} />)
     })
   }
 

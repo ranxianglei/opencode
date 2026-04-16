@@ -8,7 +8,6 @@ import { List } from "@opencode-ai/ui/list"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { useMutation } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
-import { useNavigate } from "@solidjs/router"
 import { createEffect, createMemo, createResource, onCleanup, Show } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { DialogLocalServer } from "@/components/dialog-local-server"
@@ -23,6 +22,7 @@ const DEFAULT_USERNAME = "opencode"
 interface DialogSelectServerProps {
   initialView?: "list" | "local"
   initialTargetMode?: "windows" | "wsl"
+  onNavigateHome?: () => void
 }
 
 interface ServerFormProps {
@@ -178,7 +178,6 @@ function ServerForm(props: ServerFormProps) {
 }
 
 export function DialogSelectServer(props: DialogSelectServerProps = {}) {
-  const navigate = useNavigate()
   const dialog = useDialog()
   const server = useServer()
   const platform = usePlatform()
@@ -364,10 +363,10 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     dialog.close()
     if (persist && conn.type === "http") {
       server.add(conn)
-      navigate("/")
+      props.onNavigateHome?.()
       return
     }
-    navigate("/")
+    props.onNavigateHome?.()
     queueMicrotask(() => server.setActive(ServerConnection.key(conn)))
   }
 
