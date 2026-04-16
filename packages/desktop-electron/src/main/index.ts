@@ -153,10 +153,12 @@ async function initialize() {
     throw error
   })
   server = listener
+  const runtime = localServer.getState().runtime
   serverReady.resolve({
     url,
     username: "opencode",
     password,
+    local: runtime,
   })
 
   const loadingTask = (async () => {

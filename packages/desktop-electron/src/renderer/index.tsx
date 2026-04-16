@@ -291,7 +291,9 @@ render(() => {
     const server: ServerConnection.Sidecar = {
       displayName: "Local Server",
       type: "sidecar",
-      variant: "base",
+      ...(data.local.mode === "wsl" && data.local.distro
+        ? { variant: "wsl", distro: data.local.distro }
+        : { variant: "base" }),
       http: {
         url: data.url,
         username: data.username ?? undefined,
@@ -341,7 +343,9 @@ render(() => {
           {(_) => {
             return (
               <AppInterface
-                defaultServer={defaultServer.latest ?? ServerConnection.Key.make("local:windows")}
+                defaultServer={
+                  defaultServer.latest ?? ServerConnection.Key.make(sidecar.latest?.local.key ?? "local:windows")
+                }
                 servers={servers()}
                 router={MemoryRouter}
               >

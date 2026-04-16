@@ -4,6 +4,11 @@ export type ServerReadyData = {
   url: string
   username: string | null
   password: string | null
+  local: {
+    key: string
+    mode: LocalServerMode
+    distro: string | null
+  }
 }
 
 export type SqliteMigrationProgress = { type: "InProgress"; value: number } | { type: "Done" }
