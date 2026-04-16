@@ -22,6 +22,7 @@ const DEFAULT_USERNAME = "opencode"
 
 interface DialogSelectServerProps {
   initialView?: "list" | "local"
+  initialTargetMode?: "windows" | "wsl"
 }
 
 interface ServerFormProps {
@@ -198,6 +199,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     },
     localServer: {
       showPage: props.initialView === "local",
+      targetMode: props.initialTargetMode as "windows" | "wsl" | undefined,
     },
     editServer: {
       id: undefined as string | undefined,
@@ -443,6 +445,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     resetAdd()
     resetEdit()
     setStore("localServer", "showPage", false)
+    setStore("localServer", "targetMode", undefined)
   }
 
   const startAdd = () => {
@@ -473,15 +476,21 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     })
   }
 
-  const startLocal = () => {
+  const startLocal = (targetMode?: "windows" | "wsl") => {
     resetAdd()
     resetEdit()
     setStore("localServer", "showPage", true)
+    setStore("localServer", "targetMode", targetMode)
   }
 
   const localSwapLabel = (conn: ServerConnection.Any) => {
     if (conn.type !== "sidecar") return ""
     return conn.variant === "wsl" ? "Swap to Windows" : "Swap to WSL"
+  }
+
+  const localSwapTarget = (conn: ServerConnection.Any) => {
+    if (conn.type !== "sidecar") return undefined
+    return conn.variant === "wsl" ? "windows" : "wsl"
   }
 
   const submitForm = () => {
@@ -533,7 +542,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   }
 
   return (
-    <Dialog title={formTitle()}>
+    <Dialog title={formTitle()} dismissOutside={!isLocalMode()}>
       <div class="flex flex-col gap-2">
         <Show
           when={!isFormMode()}
@@ -559,7 +568,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                 />
               }
             >
-              <DialogLocalServer />
+              <DialogLocalServer targetMode={store.localServer.targetMode} />
             </Show>
           }
         >
@@ -607,7 +616,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                         class="shrink-0"
                         onClick={(event: MouseEvent) => {
                           event.stopPropagation()
-                          startLocal()
+                          startLocal(localSwapTarget(i))
                         }}
                       >
                         {localSwapLabel(i)}

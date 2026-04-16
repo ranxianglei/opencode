@@ -6,9 +6,9 @@ import { useLanguage } from "@/context/language"
 import type { LocalServerConfig, LocalServerState, LocalServerStep } from "@/context/platform"
 import { usePlatform } from "@/context/platform"
 
-const STEP_ORDER: LocalServerStep[] = ["wsl", "distro", "opencode", "switch"]
+const WSL_STEPS: LocalServerStep[] = ["wsl", "distro", "opencode", "switch"]
 
-export function DialogLocalServer() {
+export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
   const language = useLanguage()
   const platform = usePlatform()
   const [store, setStore] = createStore({
@@ -44,8 +44,10 @@ export function DialogLocalServer() {
 
   const current = () => store.state
   const localServer = () => platform.localServer
+  const targetMode = createMemo<"windows" | "wsl">(
+    () => props.targetMode ?? (current()?.config.mode === "wsl" ? "wsl" : "wsl"),
+  )
   const busy = createMemo(() => !!current()?.job)
-  const mode = createMemo(() => current()?.config.mode ?? "windows")
   const selectedProbe = createMemo(() => current()?.checks.distro?.selected)
   const selectedInstalled = createMemo(() =>
     (current()?.checks.distro?.installed ?? []).find((item) => item.name === current()?.config.distro),
@@ -78,6 +80,7 @@ export function DialogLocalServer() {
   const opencodeReady = createMemo(() => !!current()?.checks.opencode?.resolvedPath)
   const switchReady = createMemo(() => wslReady() && distroReady() && opencodeReady())
   const recommendedStep = createMemo<LocalServerStep>(() => {
+    if (targetMode() === "windows") return "switch"
     if (!wslReady()) return "wsl"
     if (!distroReady()) return "distro"
     if (!opencodeReady()) return "opencode"
@@ -86,10 +89,6 @@ export function DialogLocalServer() {
   const activeStep = createMemo(() => store.step ?? current()?.job?.step ?? recommendedStep())
 
   createEffect(() => {
-    if (mode() !== "wsl") {
-      if (store.step) setStore("step", undefined)
-      return
-    }
     const next = current()?.job?.step ?? recommendedStep()
     if (!store.step || stepIndex(store.step) > stepIndex(next)) {
       setStore("step", next)
@@ -105,25 +104,6 @@ export function DialogLocalServer() {
   }
 
   const plainConfig = (config: LocalServerConfig): LocalServerConfig => structuredClone(unwrap(config))
-
-  const setMode = async (next: "windows" | "wsl") => {
-    const state = current()
-    if (!state || !localServer()) return
-    const config = plainConfig(state.config)
-    if (next === "wsl") setStore("step", "wsl")
-    await run(() =>
-      localServer()!.setConfig({
-        ...config,
-        mode: next,
-        onboarding: {
-          ...config.onboarding,
-          complete: next === "windows",
-          pendingRestart: next === "windows" ? false : config.onboarding.pendingRestart,
-          step: next === "windows" ? null : (config.onboarding.step ?? "wsl"),
-        },
-      }),
-    )
-  }
 
   const selectDistro = async (name: string) => {
     const state = current()
@@ -144,14 +124,31 @@ export function DialogLocalServer() {
     )
   }
 
+  const swapToWindows = async () => {
+    const state = current()
+    if (!state || !localServer()) return
+    const config = plainConfig(state.config)
+    await run(() =>
+      localServer()!.setConfig({
+        ...config,
+        mode: "windows",
+        distro: null,
+        onboarding: {
+          ...config.onboarding,
+          complete: true,
+          pendingRestart: false,
+          step: null,
+        },
+      }),
+    )
+  }
+
   const steps = createMemo(() =>
-    STEP_ORDER.map((step) => ({
+    WSL_STEPS.filter((step) => targetMode() === "wsl" || step === "switch").map((step) => ({
       step,
       title: stepTitle(step),
-      subtitle: stepSubtitle(step, {
-        current: current(),
-        selectedInstalled: selectedInstalled(),
-        selectedProbe: selectedProbe(),
+      state: stepState(step, {
+        active: activeStep(),
         wslReady: wslReady(),
         distroReady: distroReady(),
         opencodeReady: opencodeReady(),
@@ -159,15 +156,6 @@ export function DialogLocalServer() {
         needsRestart: needsRestart(),
       }),
       locked: stepIndex(step) > stepIndex(recommendedStep()),
-      state: stepState(step, {
-        active: activeStep(),
-        current: current(),
-        wslReady: wslReady(),
-        distroReady: distroReady(),
-        opencodeReady: opencodeReady(),
-        switchReady: switchReady(),
-        needsRestart: needsRestart(),
-      }),
     })),
   )
 
@@ -177,331 +165,276 @@ export function DialogLocalServer() {
         when={!store.loading}
         fallback={<div class="px-1 py-6 text-14-regular text-text-weak">Loading local server...</div>}
       >
-        <div class="rounded-md bg-surface-base p-4 flex flex-col gap-3">
-          <div class="flex items-start justify-between gap-3">
-            <div class="flex flex-col gap-1 min-w-0">
-              <div class="text-14-medium text-text-strong">Local runtime</div>
-              <div class="text-12-regular text-text-weak">Choose where the managed Local Server should run.</div>
-            </div>
-            <div class="flex gap-2 shrink-0">
-              <Button
-                variant={mode() === "windows" ? "primary" : "secondary"}
-                size="large"
-                onClick={() => void setMode("windows")}
-              >
-                Run on Windows
-              </Button>
-              <Button
-                variant={mode() === "wsl" ? "primary" : "secondary"}
-                size="large"
-                onClick={() => void setMode("wsl")}
-              >
-                Run in WSL
-              </Button>
-            </div>
+        <Show when={targetMode() === "wsl"}>
+          <div class="flex gap-2 overflow-x-auto pb-1">
+            <For each={steps()}>
+              {(item) => (
+                <button
+                  type="button"
+                  class="min-w-[132px] rounded-md border px-3 py-2 text-left transition-colors"
+                  classList={{
+                    "border-border-strong-base bg-surface-base-hover": item.state === "current",
+                    "border-icon-success-base/40 bg-surface-base": item.state === "done",
+                    "border-border-weak-base bg-background-base opacity-60": item.state === "locked",
+                    "border-icon-warning-base/40 bg-surface-base": item.state === "warning",
+                  }}
+                  disabled={item.locked}
+                  onClick={() => setStore("step", item.step)}
+                >
+                  <div class="text-13-medium text-text-strong">{item.title}</div>
+                </button>
+              )}
+            </For>
           </div>
-          <div class="text-12-regular text-text-weak">
-            Current runtime:{" "}
-            {current()?.runtime.mode === "wsl" ? `wsl:${current()?.runtime.distro ?? "unknown"}` : "windows"}
-          </div>
-          <Show when={mode() !== "wsl"}>
-            <div class="rounded-md border border-border-weak-base px-3 py-3 text-12-regular text-text-weak">
-              Select <span class="text-text-strong">Run in WSL</span> to start the WSL setup flow.
-            </div>
-          </Show>
-        </div>
+        </Show>
 
-        <Show when={mode() === "wsl"}>
-          <div class="rounded-md bg-surface-base p-4 flex flex-col gap-3">
-            <div class="text-14-medium text-text-strong">Setup flow</div>
-            <div class="flex gap-2 overflow-x-auto pb-1">
-              <For each={steps()}>
-                {(item) => (
-                  <button
-                    type="button"
-                    class="min-w-[148px] rounded-md border px-3 py-3 text-left transition-colors"
-                    classList={{
-                      "border-border-strong-base bg-surface-base-hover": item.state === "current",
-                      "border-icon-success-base/40 bg-surface-base": item.state === "done",
-                      "border-border-weak-base bg-background-base opacity-60": item.state === "locked",
-                      "border-icon-warning-base/40 bg-surface-base": item.state === "warning",
-                    }}
-                    disabled={item.locked}
-                    onClick={() => setStore("step", item.step)}
-                  >
-                    <div class="text-11-medium uppercase tracking-wide text-text-weaker">{stepNumber(item.step)}</div>
-                    <div class="mt-1 text-13-medium text-text-strong">{item.title}</div>
-                    <div class="mt-1 text-11-regular text-text-weak whitespace-pre-wrap break-words">
-                      {item.subtitle}
-                    </div>
-                  </button>
-                )}
-              </For>
-            </div>
-          </div>
-
-          <Switch>
-            <Match when={activeStep() === "wsl"}>
-              <div class="rounded-md bg-surface-base p-4 flex flex-col gap-3">
-                <div class="flex items-center justify-between gap-3">
-                  <div class="flex flex-col gap-1 min-w-0">
-                    <div class="text-14-medium text-text-strong">Step 1: Verify WSL</div>
-                    <div class="text-12-regular text-text-weak whitespace-pre-wrap break-words">
-                      {current()?.checks.wsl?.error ??
-                        current()?.checks.wsl?.status ??
-                        current()?.checks.wsl?.version ??
-                        "WSL has not been checked yet."}
-                    </div>
-                  </div>
-                  <div class="flex gap-2 shrink-0">
-                    <Button
-                      variant="secondary"
-                      size="large"
-                      disabled={busy()}
-                      onClick={() => void run(() => localServer()!.runStep("wsl"))}
-                    >
-                      Check WSL
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      size="large"
-                      disabled={busy()}
-                      onClick={() => void run(() => localServer()!.installWsl())}
-                    >
-                      Install WSL
-                    </Button>
-                  </div>
-                </div>
-                <Show when={current()?.config.onboarding.pendingRestart}>
-                  <div class="rounded-md border border-border-weak-base px-3 py-3 flex items-center justify-between gap-3">
-                    <div class="text-12-regular text-text-warning-base">
-                      Windows restart required to finish WSL installation.
-                    </div>
-                    <Button variant="secondary" size="large" onClick={() => void platform.restart()}>
-                      Restart OpenCode
-                    </Button>
-                  </div>
-                </Show>
-              </div>
-            </Match>
-
-            <Match when={activeStep() === "distro"}>
-              <div class="rounded-md bg-surface-base p-4 flex flex-col gap-3">
-                <div class="flex items-center justify-between gap-3">
-                  <div class="flex flex-col gap-1 min-w-0">
-                    <div class="text-14-medium text-text-strong">Step 2: Choose a distro</div>
-                    <div class="text-12-regular text-text-weak whitespace-pre-wrap break-words">
-                      {current()?.checks.distro?.error ??
-                        current()?.config.distro ??
-                        "Pick a distro or install one below."}
-                    </div>
-                  </div>
+        <Switch>
+          <Match when={activeStep() === "wsl"}>
+            <div class="rounded-md bg-surface-base p-4 flex flex-col gap-3">
+              <div class="flex items-center justify-between gap-3">
+                <div class="text-14-medium text-text-strong">Verify WSL</div>
+                <div class="flex gap-2 shrink-0">
                   <Button
                     variant="secondary"
                     size="large"
                     disabled={busy()}
-                    onClick={() => void run(() => localServer()!.runStep("distro"))}
+                    onClick={() => void run(() => localServer()!.runStep("wsl"))}
                   >
-                    Check distros
+                    Check WSL
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="large"
+                    disabled={busy()}
+                    onClick={() => void run(() => localServer()!.installWsl())}
+                  >
+                    Install WSL
                   </Button>
                 </div>
+              </div>
+              <div class="text-12-regular text-text-weak whitespace-pre-wrap break-words">
+                {current()?.checks.wsl?.error ??
+                  current()?.checks.wsl?.status ??
+                  current()?.checks.wsl?.version ??
+                  "WSL has not been checked yet."}
+              </div>
+              <Show when={current()?.config.onboarding.pendingRestart}>
+                <div class="rounded-md border border-border-weak-base px-3 py-3 flex items-center justify-between gap-3">
+                  <div class="text-12-regular text-text-warning-base">Windows restart required.</div>
+                  <Button variant="secondary" size="large" onClick={() => void platform.restart()}>
+                    Restart OpenCode
+                  </Button>
+                </div>
+              </Show>
+            </div>
+          </Match>
 
+          <Match when={activeStep() === "distro"}>
+            <div class="rounded-md bg-surface-base p-4 flex flex-col gap-3">
+              <div class="flex items-center justify-between gap-3">
+                <div class="text-14-medium text-text-strong">Choose a distro</div>
+                <Button
+                  variant="secondary"
+                  size="large"
+                  disabled={busy()}
+                  onClick={() => void run(() => localServer()!.runStep("distro"))}
+                >
+                  Check distros
+                </Button>
+              </div>
+              <div class="text-12-regular text-text-weak whitespace-pre-wrap break-words">
+                {current()?.checks.distro?.error ?? current()?.config.distro ?? "Pick a distro or install one below."}
+              </div>
+
+              <div class="flex flex-wrap gap-2">
+                <Button
+                  variant="secondary"
+                  size="large"
+                  disabled={busy()}
+                  onClick={() => void run(() => localServer()!.installDistro("Debian"))}
+                >
+                  Install Debian
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="large"
+                  disabled={busy()}
+                  onClick={() => void run(() => localServer()!.installDistro("Ubuntu-24.04"))}
+                >
+                  Install Ubuntu 24
+                </Button>
+              </div>
+
+              <Show when={otherDistros().length > 0}>
                 <div class="flex flex-wrap gap-2">
+                  <For each={otherDistros()}>
+                    {(item) => (
+                      <Button
+                        variant="secondary"
+                        size="large"
+                        disabled={busy()}
+                        onClick={() => void run(() => localServer()!.installDistro(item.name))}
+                      >
+                        {item.label}
+                      </Button>
+                    )}
+                  </For>
+                </div>
+              </Show>
+
+              <div class="flex flex-col gap-2">
+                <Show
+                  when={(current()?.checks.distro?.installed.length ?? 0) > 0}
+                  fallback={<div class="text-12-regular text-text-weak">No distros detected yet.</div>}
+                >
+                  <For each={current()?.checks.distro?.installed ?? []}>
+                    {(item) => (
+                      <button
+                        type="button"
+                        class="rounded-md border border-border-weak-base px-3 py-2 text-left transition-colors"
+                        classList={{ "bg-surface-raised-base": current()?.config.distro === item.name }}
+                        onClick={() => void selectDistro(item.name)}
+                      >
+                        <div class="text-13-medium text-text-strong">{item.name}</div>
+                        <div class="text-12-regular text-text-weak">
+                          {[item.isDefault ? "default" : null, item.state, item.version ? `WSL ${item.version}` : null]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </div>
+                      </button>
+                    )}
+                  </For>
+                </Show>
+              </div>
+
+              <Show when={selectedProbe()}>
+                {(probe) => (
+                  <div class="rounded-md border border-border-weak-base px-3 py-3 flex flex-col gap-1">
+                    <div class="text-12-regular text-text-weak">
+                      User: {probe().username ?? "unknown"}
+                      {probe().isRoot ? " · root" : ""}
+                      {selectedInstalled()?.version === 1 ? " · WSL 1" : ""}
+                    </div>
+                    <div class="text-12-regular text-text-weak">
+                      bash: {probe().hasBash ? "yes" : "no"} · curl: {probe().hasCurl ? "yes" : "no"} · exec:{" "}
+                      {probe().canExecute ? "yes" : "no"}
+                    </div>
+                    <Show when={selectedInstalled()?.version === 1}>
+                      <div class="text-12-regular text-text-warning-base">WSL 2 is required.</div>
+                    </Show>
+                  </div>
+                )}
+              </Show>
+
+              <Button
+                variant="secondary"
+                size="large"
+                disabled={busy() || !current()?.config.distro}
+                onClick={() => void run(() => localServer()!.openTerminal())}
+              >
+                Open terminal
+              </Button>
+            </div>
+          </Match>
+
+          <Match when={activeStep() === "opencode"}>
+            <div class="rounded-md bg-surface-base p-4 flex flex-col gap-3">
+              <div class="flex items-center justify-between gap-3">
+                <div class="text-14-medium text-text-strong">Install OpenCode</div>
+                <div class="flex gap-2 shrink-0">
                   <Button
                     variant="secondary"
                     size="large"
                     disabled={busy()}
-                    onClick={() => void run(() => localServer()!.installDistro("Debian"))}
+                    onClick={() => void run(() => localServer()!.runStep("opencode"))}
                   >
-                    Install Debian
+                    Check OpenCode
                   </Button>
                   <Button
                     variant="secondary"
                     size="large"
                     disabled={busy()}
-                    onClick={() => void run(() => localServer()!.installDistro("Ubuntu-24.04"))}
+                    onClick={() => void run(() => localServer()!.installOpencode())}
                   >
-                    Install Ubuntu 24
+                    Install OpenCode
                   </Button>
                 </div>
-
-                <Show when={otherDistros().length > 0}>
-                  <div class="flex flex-col gap-2">
-                    <div class="text-12-medium text-text-strong">Other distros</div>
-                    <div class="flex flex-wrap gap-2">
-                      <For each={otherDistros()}>
-                        {(item) => (
-                          <Button
-                            variant="secondary"
-                            size="large"
-                            disabled={busy()}
-                            onClick={() => void run(() => localServer()!.installDistro(item.name))}
-                          >
-                            {item.label}
-                          </Button>
-                        )}
-                      </For>
+              </div>
+              <div class="text-12-regular text-text-weak whitespace-pre-wrap break-words">
+                {current()?.checks.opencode?.error ??
+                  current()?.checks.opencode?.resolvedPath ??
+                  "OpenCode has not been checked in this distro yet."}
+              </div>
+              <Show when={current()?.checks.opencode}>
+                {(check) => (
+                  <div class="rounded-md border border-border-weak-base px-3 py-3 flex flex-col gap-1">
+                    <div class="text-12-regular text-text-weak">Path: {check().resolvedPath ?? "not found"}</div>
+                    <div class="text-12-regular text-text-weak">
+                      Version: {check().version ?? "unknown"}
+                      <Show when={check().expectedVersion}>
+                        {(expected) => <span>{` · desktop ${expected()}`}</span>}
+                      </Show>
                     </div>
+                    <Show when={check().matchesDesktop === false}>
+                      <div class="text-12-regular text-text-warning-base">
+                        Installed version does not match the desktop app version.
+                      </div>
+                    </Show>
                   </div>
-                </Show>
+                )}
+              </Show>
+            </div>
+          </Match>
 
-                <div class="flex flex-col gap-2">
-                  <div class="text-12-medium text-text-strong">Installed distros</div>
-                  <Show
-                    when={(current()?.checks.distro?.installed.length ?? 0) > 0}
-                    fallback={<div class="text-12-regular text-text-weak">No distros detected yet.</div>}
-                  >
-                    <For each={current()?.checks.distro?.installed ?? []}>
-                      {(item) => (
-                        <button
-                          type="button"
-                          class="rounded-md border border-border-weak-base px-3 py-2 text-left transition-colors"
-                          classList={{ "bg-surface-raised-base": current()?.config.distro === item.name }}
-                          onClick={() => void selectDistro(item.name)}
-                        >
-                          <div class="text-13-medium text-text-strong">{item.name}</div>
-                          <div class="text-12-regular text-text-weak">
-                            {[
-                              item.isDefault ? "default" : null,
-                              item.state,
-                              item.version ? `WSL ${item.version}` : null,
-                            ]
-                              .filter(Boolean)
-                              .join(" · ")}
-                          </div>
-                        </button>
-                      )}
-                    </For>
+          <Match when={activeStep() === "switch"}>
+            <div class="rounded-md bg-surface-base p-4 flex flex-col gap-3">
+              <div class="flex items-center justify-between gap-3">
+                <div class="text-14-medium text-text-strong">
+                  {targetMode() === "windows" ? "Swap to Windows" : "Switch Local Server"}
+                </div>
+                <div class="flex gap-2 shrink-0">
+                  <Show when={targetMode() === "windows" && configuredRuntime().mode !== "windows"}>
+                    <Button variant="secondary" size="large" onClick={() => void swapToWindows()}>
+                      Use Windows
+                    </Button>
                   </Show>
-                </div>
-
-                <Show when={selectedProbe()}>
-                  {(probe) => (
-                    <div class="rounded-md border border-border-weak-base px-3 py-3 flex flex-col gap-1">
-                      <div class="text-12-medium text-text-strong">Selected distro checks</div>
-                      <div class="text-12-regular text-text-weak">
-                        User: {probe().username ?? "unknown"}
-                        {probe().isRoot ? " · root" : ""}
-                        {selectedInstalled()?.version === 1 ? " · WSL 1" : ""}
-                      </div>
-                      <div class="text-12-regular text-text-weak">
-                        bash: {probe().hasBash ? "yes" : "no"} · curl: {probe().hasCurl ? "yes" : "no"} · exec:{" "}
-                        {probe().canExecute ? "yes" : "no"}
-                      </div>
-                      <Show when={selectedInstalled()?.version === 1}>
-                        <div class="text-12-regular text-text-warning-base">
-                          WSL 2 is required. Convert this distro before continuing.
-                        </div>
-                      </Show>
-                    </div>
-                  )}
-                </Show>
-
-                <div class="flex gap-2">
                   <Button
                     variant="secondary"
                     size="large"
-                    disabled={busy() || !current()?.config.distro}
-                    onClick={() => void run(() => localServer()!.openTerminal())}
-                  >
-                    Open terminal
-                  </Button>
-                </div>
-              </div>
-            </Match>
-
-            <Match when={activeStep() === "opencode"}>
-              <div class="rounded-md bg-surface-base p-4 flex flex-col gap-3">
-                <div class="flex items-center justify-between gap-3">
-                  <div class="flex flex-col gap-1 min-w-0">
-                    <div class="text-14-medium text-text-strong">Step 3: Install OpenCode</div>
-                    <div class="text-12-regular text-text-weak whitespace-pre-wrap break-words">
-                      {current()?.checks.opencode?.error ??
-                        current()?.checks.opencode?.resolvedPath ??
-                        "OpenCode has not been checked in this distro yet."}
-                    </div>
-                  </div>
-                  <div class="flex gap-2 shrink-0">
-                    <Button
-                      variant="secondary"
-                      size="large"
-                      disabled={busy()}
-                      onClick={() => void run(() => localServer()!.runStep("opencode"))}
-                    >
-                      Check OpenCode
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      size="large"
-                      disabled={busy()}
-                      onClick={() => void run(() => localServer()!.installOpencode())}
-                    >
-                      Install OpenCode
-                    </Button>
-                  </div>
-                </div>
-
-                <Show when={current()?.checks.opencode}>
-                  {(check) => (
-                    <div class="rounded-md border border-border-weak-base px-3 py-3 flex flex-col gap-1">
-                      <div class="text-12-regular text-text-weak">Path: {check().resolvedPath ?? "not found"}</div>
-                      <div class="text-12-regular text-text-weak">
-                        Version: {check().version ?? "unknown"}
-                        <Show when={check().expectedVersion}>
-                          {(expected) => <span>{` · desktop ${expected()}`}</span>}
-                        </Show>
-                      </div>
-                      <Show when={check().matchesDesktop === false}>
-                        <div class="text-12-regular text-text-warning-base">
-                          Installed version does not match the desktop app version.
-                        </div>
-                      </Show>
-                    </div>
-                  )}
-                </Show>
-              </div>
-            </Match>
-
-            <Match when={activeStep() === "switch"}>
-              <div class="rounded-md bg-surface-base p-4 flex flex-col gap-3">
-                <div class="flex items-center justify-between gap-3">
-                  <div class="flex flex-col gap-1 min-w-0">
-                    <div class="text-14-medium text-text-strong">Step 4: Switch Local Server</div>
-                    <div class="text-12-regular text-text-weak whitespace-pre-wrap break-words">
-                      {needsRestart()
-                        ? "Restart OpenCode to apply your WSL local runtime configuration."
-                        : "WSL local runtime is configured and active."}
-                    </div>
-                  </div>
-                  <Button
-                    variant="secondary"
-                    size="large"
-                    disabled={!switchReady() || !needsRestart()}
+                    disabled={(targetMode() === "wsl" && !switchReady()) || !needsRestart()}
                     onClick={() => void platform.restart()}
                   >
                     Restart OpenCode
                   </Button>
                 </div>
-
-                <div class="rounded-md border border-border-weak-base px-3 py-3 flex flex-col gap-1">
-                  <div class="text-12-regular text-text-weak">
-                    Configured runtime:{" "}
-                    {configuredRuntime().mode === "wsl" ? `wsl:${configuredRuntime().distro ?? "unknown"}` : "windows"}
-                  </div>
-                  <div class="text-12-regular text-text-weak">
-                    Current runtime:{" "}
-                    {current()?.runtime.mode === "wsl" ? `wsl:${current()?.runtime.distro ?? "unknown"}` : "windows"}
-                  </div>
-                  <Show when={!switchReady()}>
-                    <div class="text-12-regular text-text-warning-base">
-                      Complete the earlier setup steps before switching.
-                    </div>
-                  </Show>
-                </div>
               </div>
-            </Match>
-          </Switch>
-        </Show>
+
+              <div class="text-12-regular text-text-weak whitespace-pre-wrap break-words">
+                {targetMode() === "windows"
+                  ? configuredRuntime().mode === "windows"
+                    ? "Restart OpenCode to finish switching back to Windows."
+                    : "Switch the Local Server target back to Windows."
+                  : needsRestart()
+                    ? "Restart OpenCode to finish switching to WSL."
+                    : "WSL Local Server is active."}
+              </div>
+
+              <div class="rounded-md border border-border-weak-base px-3 py-3 flex flex-col gap-1">
+                <div class="text-12-regular text-text-weak">
+                  Configured:{" "}
+                  {configuredRuntime().mode === "wsl" ? `wsl:${configuredRuntime().distro ?? "unknown"}` : "windows"}
+                </div>
+                <div class="text-12-regular text-text-weak">
+                  Current:{" "}
+                  {current()?.runtime.mode === "wsl" ? `wsl:${current()?.runtime.distro ?? "unknown"}` : "windows"}
+                </div>
+                <Show when={targetMode() === "wsl" && !switchReady()}>
+                  <div class="text-12-regular text-text-warning-base">Complete the earlier steps first.</div>
+                </Show>
+              </div>
+            </div>
+          </Match>
+        </Switch>
 
         <Show when={(current()?.transcript.length ?? 0) > 0}>
           <div class="rounded-md bg-surface-base p-4 flex flex-col gap-2">
@@ -526,55 +459,20 @@ function requestError(language: ReturnType<typeof useLanguage>, err: unknown) {
 }
 
 function stepIndex(step: LocalServerStep) {
-  return STEP_ORDER.indexOf(step)
-}
-
-function stepNumber(step: LocalServerStep) {
-  return `${stepIndex(step) + 1}`
+  return WSL_STEPS.indexOf(step)
 }
 
 function stepTitle(step: LocalServerStep) {
-  if (step === "wsl") return "WSL"
-  if (step === "distro") return "Distro"
-  if (step === "opencode") return "OpenCode"
+  if (step === "wsl") return "Verify WSL"
+  if (step === "distro") return "Choose distro"
+  if (step === "opencode") return "Install OpenCode"
   return "Switch"
-}
-
-function stepSubtitle(
-  step: LocalServerStep,
-  state: {
-    current?: LocalServerState
-    selectedInstalled?: LocalServerState["checks"]["distro"] extends infer T ? any : never
-    selectedProbe?: LocalServerState["checks"]["distro"] extends infer T ? any : never
-    wslReady: boolean
-    distroReady: boolean
-    opencodeReady: boolean
-    switchReady: boolean
-    needsRestart: boolean
-  },
-) {
-  if (step === "wsl") {
-    if (state.wslReady) return "Ready"
-    return state.current?.checks.wsl?.error ?? "Install or verify WSL"
-  }
-  if (step === "distro") {
-    if (state.distroReady) return state.current?.config.distro ?? "Ready"
-    if (state.selectedInstalled?.version === 1) return "Convert to WSL 2"
-    return state.current?.checks.distro?.error ?? state.current?.config.distro ?? "Choose a distro"
-  }
-  if (step === "opencode") {
-    if (state.opencodeReady) return state.current?.checks.opencode?.version ?? "Ready"
-    return state.current?.checks.opencode?.error ?? "Install OpenCode"
-  }
-  if (!state.switchReady) return "Complete prior steps"
-  return state.needsRestart ? "Restart to apply" : "Active"
 }
 
 function stepState(
   step: LocalServerStep,
   state: {
     active: LocalServerStep
-    current?: LocalServerState
     wslReady: boolean
     distroReady: boolean
     opencodeReady: boolean
@@ -582,7 +480,6 @@ function stepState(
     needsRestart: boolean
   },
 ) {
-  if (state.current?.job?.step === step) return "current"
   if (state.active === step) return "current"
   if (step === "wsl") return state.wslReady ? "done" : "warning"
   if (step === "distro")
