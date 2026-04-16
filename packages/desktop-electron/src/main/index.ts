@@ -69,6 +69,14 @@ function setupApp() {
   ensureLoopbackNoProxy()
   app.commandLine.appendSwitch("proxy-bypass-list", "<-loopback>")
 
+  process.on("uncaughtException", (error) => {
+    logger.error("main process uncaught exception", error)
+  })
+
+  process.on("unhandledRejection", (reason) => {
+    logger.error("main process unhandled rejection", reason)
+  })
+
   if (!app.requestSingleInstanceLock()) {
     app.quit()
     return
@@ -227,6 +235,7 @@ async function initialize() {
     const show = await Promise.race([loadingTask.then(() => false), delay(1_000).then(() => true)])
     if (show) {
       overlay = createLoadingWindow(globals)
+      wireWindowDiagnostics(overlay, "loading")
       await delay(1_000)
     }
   }
@@ -239,9 +248,49 @@ async function initialize() {
   }
 
   mainWindow = createMainWindow(globals)
+  wireWindowDiagnostics(mainWindow, "main")
   wireMenu()
 
   overlay?.close()
+}
+
+function wireWindowDiagnostics(win: BrowserWindow, label: string) {
+  win.webContents.on("console-message", (_event, level, message, line, sourceId) => {
+    const payload = { level, message, line, sourceId }
+    if (level >= 3) {
+      logger.error(`${label} renderer console`, payload)
+      return
+    }
+    if (level >= 2) {
+      logger.warn(`${label} renderer console`, payload)
+      return
+    }
+    logger.log(`${label} renderer console`, payload)
+  })
+
+  win.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    logger.error(`${label} renderer failed load`, {
+      errorCode,
+      errorDescription,
+      validatedURL,
+      isMainFrame,
+    })
+  })
+
+  win.webContents.on("render-process-gone", (_event, details) => {
+    logger.error(`${label} renderer process gone`, details)
+  })
+
+  win.webContents.on("preload-error", (_event, path, error) => {
+    logger.error(`${label} preload error`, {
+      path,
+      error: error instanceof Error ? (error.stack ?? error.message) : String(error),
+    })
+  })
+
+  win.on("unresponsive", () => {
+    logger.error(`${label} window became unresponsive`)
+  })
 }
 
 function wireMenu() {

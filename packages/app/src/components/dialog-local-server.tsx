@@ -339,6 +339,7 @@ export function DialogLocalServer() {
 }
 
 function requestError(language: ReturnType<typeof useLanguage>, err: unknown) {
+  console.error("Local Server request failed", err)
   showToast({
     variant: "error",
     title: language.t("common.requestFailed"),
