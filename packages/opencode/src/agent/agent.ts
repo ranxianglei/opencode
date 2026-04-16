@@ -35,7 +35,7 @@ export namespace Agent {
       topP: z.number().optional(),
       temperature: z.number().optional(),
       color: z.string().optional(),
-      permission: Permission.Ruleset,
+      permission: Permission.Ruleset.zod,
       model: z
         .object({
           modelID: ModelID.zod,
@@ -368,7 +368,7 @@ export namespace Agent {
                   )),
               {
                 role: "user",
-                content: `Create an agent configuration based on this request: \"${input.description}\".\n\nIMPORTANT: The following identifiers already exist and must NOT be used: ${existing.map((i) => i.name).join(", ")}\n  Return ONLY the JSON object, no other text, do not wrap in backticks`,
+                content: `Create an agent configuration based on this request: "${input.description}".\n\nIMPORTANT: The following identifiers already exist and must NOT be used: ${existing.map((i) => i.name).join(", ")}\n  Return ONLY the JSON object, no other text, do not wrap in backticks`,
               },
             ],
             model: language,
