@@ -1,7 +1,9 @@
+import { spawn } from "node:child_process"
 import { app } from "electron"
 import { DEFAULT_SERVER_URL_KEY } from "./constants"
 import { getUserShell, loadShellEnv } from "./shell-env"
 import { getStore } from "./store"
+import { wslArgs } from "./wsl"
 
 export type HealthCheck = { wait: Promise<void> }
 
@@ -46,6 +48,57 @@ export async function spawnLocalServer(hostname: string, port: number, password:
   return { listener, health: { wait } }
 }
 
+export async function spawnWslLocalServer(distro: string, port: number, password: string) {
+  const script = [
+    "set -e",
+    "OPENCODE_EXPERIMENTAL_ICON_DISCOVERY=true",
+    "OPENCODE_EXPERIMENTAL_FILEWATCHER=true",
+    "OPENCODE_CLIENT=desktop",
+    `OPENCODE_SERVER_USERNAME=${shellEscape("opencode")}`,
+    `OPENCODE_SERVER_PASSWORD=${shellEscape(password)}`,
+    'XDG_STATE_HOME="$HOME/.local/state"',
+    `exec opencode --print-logs --log-level WARN serve --hostname 0.0.0.0 --port ${port}`,
+  ].join(" ")
+
+  const child = spawn("wsl", wslArgs(["bash", "-lc", script], distro), {
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  })
+  child.stdout.setEncoding("utf8")
+  child.stderr.setEncoding("utf8")
+
+  const exit = new Promise<never>((_, reject) => {
+    child.once("error", reject)
+    child.once("exit", (code, signal) => {
+      reject(
+        new Error(
+          `WSL local server exited before becoming healthy (code=${code ?? "null"} signal=${signal ?? "null"})`,
+        ),
+      )
+    })
+  })
+
+  const wait = Promise.race([
+    (async () => {
+      const url = `http://127.0.0.1:${port}`
+      while (true) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        if (await checkHealth(url, password)) return
+      }
+    })(),
+    exit,
+  ])
+
+  return {
+    listener: {
+      stop() {
+        child.kill()
+      },
+    },
+    health: { wait },
+  }
+}
+
 function prepareServerEnv(password: string) {
   const shell = process.platform === "win32" ? null : getUserShell()
   const shellEnv = shell ? (loadShellEnv(shell) ?? {}) : {}
@@ -60,6 +113,10 @@ function prepareServerEnv(password: string) {
     XDG_STATE_HOME: app.getPath("userData"),
   }
   Object.assign(process.env, env)
+}
+
+function shellEscape(value: string) {
+  return `'${value.replace(/'/g, `'"'"'`)}'`
 }
 
 export async function checkHealth(url: string, password?: string | null): Promise<boolean> {

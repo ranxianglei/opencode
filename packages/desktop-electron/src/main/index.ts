@@ -42,15 +42,14 @@ import { createLocalServerController } from "./local-server"
 import { initLogging } from "./logging"
 import { parseMarkdown } from "./markdown"
 import { createMenu } from "./menu"
-import { getDefaultServerUrl, setDefaultServerUrl, spawnLocalServer } from "./server"
+import { getDefaultServerUrl, setDefaultServerUrl, spawnLocalServer, spawnWslLocalServer } from "./server"
 import { createLoadingWindow, createMainWindow, setBackgroundColor, setDockIcon } from "./windows"
-import type { Server } from "virtual:opencode-server"
 
 const initEmitter = new EventEmitter()
 let initStep: InitStep = { phase: "server_waiting" }
 
 let mainWindow: BrowserWindow | null = null
-let server: Server.Listener | null = null
+let server: { stop(): void } | null = null
 const loadingComplete = defer<void>()
 
 const pendingDeepLinks: string[] = []
@@ -140,26 +139,47 @@ async function initialize() {
   const hostname = "127.0.0.1"
   const url = `http://${hostname}:${port}`
   const password = randomUUID()
+  const config = localServer.getState().config
+  const runtime =
+    config.mode === "wsl" && config.distro
+      ? {
+          key: `local:wsl:${config.distro}`,
+          mode: "wsl" as const,
+          distro: config.distro,
+        }
+      : {
+          key: "local:windows",
+          mode: "windows" as const,
+          distro: null,
+        }
 
   logger.log("spawning sidecar", { url })
-  localServer.setRuntime({ key: "local:windows", mode: "windows", distro: null })
+  localServer.setRuntime(runtime)
   localServer.setStatus({ kind: "running", step: null })
-  const { listener, health } = await spawnLocalServer(hostname, port, password).catch((error) => {
-    localServer.setStatus({
-      kind: "failed",
-      step: null,
-      message: error instanceof Error ? error.message : String(error),
-    })
-    throw error
-  })
-  server = listener
-  const runtime = localServer.getState().runtime
   serverReady.resolve({
     url,
     username: "opencode",
     password,
     local: runtime,
   })
+  const startup = await (async () => {
+    try {
+      if (runtime.mode === "wsl") {
+        if (!runtime.distro) throw new Error("No WSL distro selected")
+        return spawnWslLocalServer(runtime.distro, port, password)
+      }
+      return spawnLocalServer(hostname, port, password)
+    } catch (error) {
+      localServer.setStatus({
+        kind: "failed",
+        step: null,
+        message: error instanceof Error ? error.message : String(error),
+      })
+      logger.error("local server startup failed", error)
+      return undefined
+    }
+  })()
+  server = startup?.listener ?? null
 
   const loadingTask = (async () => {
     logger.log("sidecar connection started", { url })
@@ -175,23 +195,25 @@ async function initialize() {
       await sqliteDone?.promise
     }
 
-    await Promise.race([
-      health.wait,
-      delay(30_000).then(() => {
-        throw new Error("Sidecar health check timed out")
-      }),
-    ])
-      .then(() => {
-        localServer.setStatus({ kind: "ready" })
-      })
-      .catch((error) => {
-        localServer.setStatus({
-          kind: "failed",
-          step: null,
-          message: error instanceof Error ? error.message : String(error),
+    if (startup) {
+      await Promise.race([
+        startup.health.wait,
+        delay(30_000).then(() => {
+          throw new Error("Sidecar health check timed out")
+        }),
+      ])
+        .then(() => {
+          localServer.setStatus({ kind: "ready" })
         })
-        logger.error("sidecar health check failed", error)
-      })
+        .catch((error) => {
+          localServer.setStatus({
+            kind: "failed",
+            step: null,
+            message: error instanceof Error ? error.message : String(error),
+          })
+          logger.error("sidecar health check failed", error)
+        })
+    }
 
     logger.log("loading task finished")
   })()
