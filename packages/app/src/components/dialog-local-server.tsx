@@ -1,9 +1,9 @@
 import { Button } from "@opencode-ai/ui/button"
 import { showToast } from "@opencode-ai/ui/toast"
 import { createEffect, createMemo, For, onCleanup, Show } from "solid-js"
-import { createStore, reconcile } from "solid-js/store"
+import { createStore, reconcile, unwrap } from "solid-js/store"
 import { useLanguage } from "@/context/language"
-import type { LocalServerState } from "@/context/platform"
+import type { LocalServerConfig, LocalServerState } from "@/context/platform"
 import { usePlatform } from "@/context/platform"
 
 export function DialogLocalServer() {
@@ -66,18 +66,21 @@ export function DialogLocalServer() {
     }
   }
 
+  const plainConfig = (config: LocalServerConfig): LocalServerConfig => structuredClone(unwrap(config))
+
   const setMode = async (next: "windows" | "wsl") => {
     const state = current()
     if (!state || !localServer()) return
+    const config = plainConfig(state.config)
     await run(() =>
       localServer()!.setConfig({
-        ...state.config,
+        ...config,
         mode: next,
         onboarding: {
-          ...state.config.onboarding,
+          ...config.onboarding,
           complete: next === "windows",
-          pendingRestart: next === "windows" ? false : state.config.onboarding.pendingRestart,
-          step: next === "windows" ? null : state.config.onboarding.step,
+          pendingRestart: next === "windows" ? false : config.onboarding.pendingRestart,
+          step: next === "windows" ? null : config.onboarding.step,
         },
       }),
     )
@@ -86,13 +89,14 @@ export function DialogLocalServer() {
   const selectDistro = async (name: string) => {
     const state = current()
     if (!state || !localServer()) return
+    const config = plainConfig(state.config)
     await run(() =>
       localServer()!.setConfig({
-        ...state.config,
+        ...config,
         mode: "wsl",
         distro: name,
         onboarding: {
-          ...state.config.onboarding,
+          ...config.onboarding,
           complete: false,
           step: "distro",
         },
