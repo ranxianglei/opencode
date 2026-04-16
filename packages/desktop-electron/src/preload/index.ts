@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron"
-import type { ElectronAPI, InitStep, SqliteMigrationProgress } from "./types"
+import type { ElectronAPI, InitStep, LocalServerEvent, SqliteMigrationProgress } from "./types"
 
 const api: ElectronAPI = {
   killSidecar: () => ipcRenderer.invoke("kill-sidecar"),
@@ -11,10 +11,17 @@ const api: ElectronAPI = {
       ipcRenderer.removeListener("init-step", handler)
     })
   },
+  localServer: {
+    getState: () => ipcRenderer.invoke("local-server-get-state"),
+    setConfig: (config) => ipcRenderer.invoke("local-server-set-config", config),
+    subscribe: (cb) => {
+      const handler = (_: unknown, event: LocalServerEvent) => cb(event)
+      ipcRenderer.on("local-server-event", handler)
+      return () => ipcRenderer.removeListener("local-server-event", handler)
+    },
+  },
   getDefaultServerUrl: () => ipcRenderer.invoke("get-default-server-url"),
   setDefaultServerUrl: (url) => ipcRenderer.invoke("set-default-server-url", url),
-  getWslConfig: () => ipcRenderer.invoke("get-wsl-config"),
-  setWslConfig: (config) => ipcRenderer.invoke("set-wsl-config", config),
   getDisplayBackend: () => ipcRenderer.invoke("get-display-backend"),
   setDisplayBackend: (backend) => ipcRenderer.invoke("set-display-backend", backend),
   parseMarkdownCommand: (markdown) => ipcRenderer.invoke("parse-markdown", markdown),

@@ -2,7 +2,15 @@ import { execFile } from "node:child_process"
 import { BrowserWindow, Notification, app, clipboard, dialog, ipcMain, shell } from "electron"
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron"
 
-import type { InitStep, ServerReadyData, SqliteMigrationProgress, TitlebarTheme, WslConfig } from "../preload/types"
+import type {
+  InitStep,
+  LocalServerConfig,
+  LocalServerEvent,
+  LocalServerState,
+  ServerReadyData,
+  SqliteMigrationProgress,
+  TitlebarTheme,
+} from "../preload/types"
 import { getStore } from "./store"
 import { setTitlebar } from "./windows"
 
@@ -14,10 +22,11 @@ const pickerFilters = (ext?: string[]) => {
 type Deps = {
   killSidecar: () => void
   awaitInitialization: (sendStep: (step: InitStep) => void) => Promise<ServerReadyData>
+  getLocalServerState: () => Promise<LocalServerState> | LocalServerState
+  setLocalServerConfig: (config: LocalServerConfig) => Promise<void> | void
+  onLocalServerEvent: (listener: (event: LocalServerEvent) => void) => () => void
   getDefaultServerUrl: () => Promise<string | null> | string | null
   setDefaultServerUrl: (url: string | null) => Promise<void> | void
-  getWslConfig: () => Promise<WslConfig>
-  setWslConfig: (config: WslConfig) => Promise<void> | void
   getDisplayBackend: () => Promise<string | null>
   setDisplayBackend: (backend: string | null) => Promise<void> | void
   parseMarkdown: (markdown: string) => Promise<string> | string
@@ -32,17 +41,27 @@ type Deps = {
 }
 
 export function registerIpcHandlers(deps: Deps) {
+  const offLocalServer = deps.onLocalServerEvent((payload) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed()) continue
+      win.webContents.send("local-server-event", payload)
+    }
+  })
+  app.once("will-quit", offLocalServer)
+
   ipcMain.handle("kill-sidecar", () => deps.killSidecar())
   ipcMain.handle("await-initialization", (event: IpcMainInvokeEvent) => {
     const send = (step: InitStep) => event.sender.send("init-step", step)
     return deps.awaitInitialization(send)
   })
+  ipcMain.handle("local-server-get-state", () => deps.getLocalServerState())
+  ipcMain.handle("local-server-set-config", (_event: IpcMainInvokeEvent, config: LocalServerConfig) =>
+    deps.setLocalServerConfig(config),
+  )
   ipcMain.handle("get-default-server-url", () => deps.getDefaultServerUrl())
   ipcMain.handle("set-default-server-url", (_event: IpcMainInvokeEvent, url: string | null) =>
     deps.setDefaultServerUrl(url),
   )
-  ipcMain.handle("get-wsl-config", () => deps.getWslConfig())
-  ipcMain.handle("set-wsl-config", (_event: IpcMainInvokeEvent, config: WslConfig) => deps.setWslConfig(config))
   ipcMain.handle("get-display-backend", () => deps.getDisplayBackend())
   ipcMain.handle("set-display-backend", (_event: IpcMainInvokeEvent, backend: string | null) =>
     deps.setDisplayBackend(backend),

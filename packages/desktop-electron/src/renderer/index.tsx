@@ -194,16 +194,6 @@ const createPlatform = (): Platform => {
       return fetch(input, init)
     },
 
-    getWslEnabled: async () => {
-      const next = await window.api.getWslConfig().catch(() => null)
-      if (next) return next.enabled
-      return window.__OPENCODE__!.wsl ?? false
-    },
-
-    setWslEnabled: async (enabled) => {
-      await window.api.setWslConfig({ enabled })
-    },
-
     getDefaultServer: async () => {
       const url = await window.api.getDefaultServerUrl().catch(() => null)
       if (!url) return null

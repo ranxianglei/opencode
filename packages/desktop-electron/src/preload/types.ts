@@ -8,7 +8,49 @@ export type ServerReadyData = {
 
 export type SqliteMigrationProgress = { type: "InProgress"; value: number } | { type: "Done" }
 
-export type WslConfig = { enabled: boolean }
+export type LocalServerMode = "windows" | "wsl"
+export type LocalServerStep = "wsl" | "distro" | "opencode" | "switch"
+export type LocalServerMismatchAcknowledgement = {
+  path: string
+  version: string
+}
+export type LocalServerConfig = {
+  mode: LocalServerMode
+  distro: string | null
+  onboarding: {
+    step: LocalServerStep | null
+    complete: boolean
+    pendingRestart: boolean
+  }
+  acknowledgements: {
+    root: string[]
+    mismatch: LocalServerMismatchAcknowledgement[]
+  }
+}
+export type LocalServerStatus =
+  | { kind: "idle" }
+  | { kind: "ready" }
+  | { kind: "running"; step: LocalServerStep | null }
+  | { kind: "failed"; step: LocalServerStep | null; message: string }
+export type LocalServerState = {
+  config: LocalServerConfig
+  runtime: {
+    key: string
+    mode: LocalServerMode
+    distro: string | null
+  }
+  status: LocalServerStatus
+  job: { step: LocalServerStep | null; startedAt: number } | null
+}
+export type LocalServerEvent = {
+  type: "state"
+  state: LocalServerState
+}
+export type LocalServerAPI = {
+  getState: () => Promise<LocalServerState>
+  setConfig: (config: LocalServerConfig) => Promise<void>
+  subscribe: (cb: (event: LocalServerEvent) => void) => () => void
+}
 
 export type LinuxDisplayBackend = "wayland" | "auto"
 export type TitlebarTheme = {
@@ -19,10 +61,9 @@ export type ElectronAPI = {
   killSidecar: () => Promise<void>
   installCli: () => Promise<string>
   awaitInitialization: (onStep: (step: InitStep) => void) => Promise<ServerReadyData>
+  localServer: LocalServerAPI
   getDefaultServerUrl: () => Promise<string | null>
   setDefaultServerUrl: (url: string | null) => Promise<void>
-  getWslConfig: () => Promise<WslConfig>
-  setWslConfig: (config: WslConfig) => Promise<void>
   getDisplayBackend: () => Promise<LinuxDisplayBackend | null>
   setDisplayBackend: (backend: LinuxDisplayBackend | null) => Promise<void>
   parseMarkdownCommand: (markdown: string) => Promise<string>

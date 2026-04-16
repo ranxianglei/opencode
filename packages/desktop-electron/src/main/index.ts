@@ -34,14 +34,15 @@ app.setAppUserModelId(appId)
 app.setPath("userData", join(app.getPath("appData"), appId))
 const { autoUpdater } = pkg
 
-import type { InitStep, ServerReadyData, SqliteMigrationProgress, WslConfig } from "../preload/types"
+import type { InitStep, ServerReadyData, SqliteMigrationProgress } from "../preload/types"
 import { checkAppExists, resolveAppPath, wslPath } from "./apps"
 import { CHANNEL, UPDATER_ENABLED } from "./constants"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand, sendSqliteMigrationProgress } from "./ipc"
+import { createLocalServerController } from "./local-server"
 import { initLogging } from "./logging"
 import { parseMarkdown } from "./markdown"
 import { createMenu } from "./menu"
-import { getDefaultServerUrl, getWslConfig, setDefaultServerUrl, setWslConfig, spawnLocalServer } from "./server"
+import { getDefaultServerUrl, setDefaultServerUrl, spawnLocalServer } from "./server"
 import { createLoadingWindow, createMainWindow, setBackgroundColor, setDockIcon } from "./windows"
 import type { Server } from "virtual:opencode-server"
 
@@ -55,6 +56,7 @@ const loadingComplete = defer<void>()
 const pendingDeepLinks: string[] = []
 
 const serverReady = defer<ServerReadyData>()
+const localServer = createLocalServerController()
 const logger = initLogging()
 
 logger.log("app starting", {
@@ -231,10 +233,11 @@ registerIpcHandlers({
       initEmitter.off("step", listener)
     }
   },
+  getLocalServerState: () => localServer.getState(),
+  setLocalServerConfig: (config) => localServer.setConfig(config),
+  onLocalServerEvent: (listener) => localServer.subscribe(listener),
   getDefaultServerUrl: () => getDefaultServerUrl(),
   setDefaultServerUrl: (url) => setDefaultServerUrl(url),
-  getWslConfig: () => Promise.resolve(getWslConfig()),
-  setWslConfig: (config: WslConfig) => setWslConfig(config),
   getDisplayBackend: async () => null,
   setDisplayBackend: async () => undefined,
   parseMarkdown: async (markdown) => parseMarkdown(markdown),
