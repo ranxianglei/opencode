@@ -55,6 +55,7 @@ const loadingComplete = defer<void>()
 const pendingDeepLinks: string[] = []
 
 const serverReady = defer<ServerReadyData>()
+void serverReady.promise.catch(() => undefined)
 const localServer = createLocalServerController(app.getVersion())
 const logger = initLogging()
 
@@ -164,26 +165,31 @@ async function initialize() {
   logger.log("spawning sidecar", { url })
   localServer.setRuntime(runtime)
   localServer.setStatus({ kind: "running", step: null })
-  serverReady.resolve({
+  const startupData = {
     url,
     username: "opencode",
     password,
     local: runtime,
-  })
+  }
+  let startupError: Error | null = null
   const startup = await (async () => {
     try {
       if (runtime.mode === "wsl") {
         if (!runtime.distro) throw new Error("No WSL distro selected")
-        return spawnWslLocalServer(runtime.distro, port, password)
+        return spawnWslLocalServer(runtime.distro, port, password, {
+          onLine: (line) =>
+            logger.log("wsl sidecar startup", { distro: runtime.distro, stream: line.stream, text: line.text }),
+        })
       }
       return spawnLocalServer(hostname, port, password)
     } catch (error) {
+      startupError = asError(error)
       localServer.setStatus({
         kind: "failed",
         step: null,
-        message: error instanceof Error ? error.message : String(error),
+        message: startupError.message,
       })
-      logger.error("local server startup failed", error)
+      logger.error("local server startup failed", startupError)
       return undefined
     }
   })()
@@ -212,15 +218,20 @@ async function initialize() {
       ])
         .then(() => {
           localServer.setStatus({ kind: "ready" })
+          serverReady.resolve(startupData)
         })
         .catch((error) => {
+          startupError = asError(error)
           localServer.setStatus({
             kind: "failed",
             step: null,
-            message: error instanceof Error ? error.message : String(error),
+            message: startupError.message,
           })
-          logger.error("sidecar health check failed", error)
+          logger.error("sidecar health check failed", startupError)
+          serverReady.reject(startupError)
         })
+    } else {
+      serverReady.reject(startupError ?? new Error("Local server startup failed"))
     }
 
     logger.log("loading task finished")
@@ -508,6 +519,10 @@ async function checkForUpdates(alertOnFail: boolean) {
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function asError(error: unknown) {
+  return error instanceof Error ? error : new Error(String(error))
 }
 
 function defer<T>() {

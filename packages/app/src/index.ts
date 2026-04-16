@@ -1,4 +1,5 @@
 export { AppBaseProviders, AppInterface } from "./app"
+export { DialogLocalServer } from "./components/dialog-local-server"
 export { ACCEPTED_FILE_EXTENSIONS, ACCEPTED_FILE_TYPES, filePickerFilters } from "./constants/file-picker"
 export { useCommand } from "./context/command"
 export { loadLocaleDict, normalizeLocale, type Locale } from "./context/language"

@@ -3,7 +3,7 @@ import { app } from "electron"
 import { DEFAULT_SERVER_URL_KEY } from "./constants"
 import { getUserShell, loadShellEnv } from "./shell-env"
 import { getStore } from "./store"
-import { wslArgs } from "./wsl"
+import { type WslCommandLine, resolveWslOpencode, wslArgs } from "./wsl"
 
 export type HealthCheck = { wait: Promise<void> }
 
@@ -48,33 +48,48 @@ export async function spawnLocalServer(hostname: string, port: number, password:
   return { listener, health: { wait } }
 }
 
-export async function spawnWslLocalServer(distro: string, port: number, password: string) {
-  const script = [
-    "set -e",
-    "OPENCODE_EXPERIMENTAL_ICON_DISCOVERY=true",
-    "OPENCODE_EXPERIMENTAL_FILEWATCHER=true",
-    "OPENCODE_CLIENT=desktop",
-    `OPENCODE_SERVER_USERNAME=${shellEscape("opencode")}`,
-    `OPENCODE_SERVER_PASSWORD=${shellEscape(password)}`,
-    'XDG_STATE_HOME="$HOME/.local/state"',
-    `exec opencode --print-logs --log-level WARN serve --hostname 0.0.0.0 --port ${port}`,
-  ].join(" ")
+export async function spawnWslLocalServer(
+  distro: string,
+  port: number,
+  password: string,
+  opts: { onLine?: (line: WslCommandLine) => void } = {},
+) {
+  const opencode = await resolveWslOpencode(distro)
+  if (!opencode) throw new Error(`OpenCode is not installed in ${distro}`)
 
-  const child = spawn("wsl", wslArgs(["bash", "-lc", script], distro), {
-    stdio: ["ignore", "pipe", "pipe"],
+  const script = [
+    "set -euo pipefail",
+    "export OPENCODE_EXPERIMENTAL_ICON_DISCOVERY=true",
+    "export OPENCODE_EXPERIMENTAL_FILEWATCHER=true",
+    "export OPENCODE_CLIENT=desktop",
+    `export OPENCODE_SERVER_USERNAME=${shellEscape("opencode")}`,
+    `export OPENCODE_SERVER_PASSWORD=${shellEscape(password)}`,
+    'export XDG_STATE_HOME="$HOME/.local/state"',
+    `exec ${shellEscape(opencode)} --print-logs --log-level WARN serve --hostname 0.0.0.0 --port ${port}`,
+  ].join("\n")
+
+  const child = spawn("wsl", wslArgs(["bash", "-se"], distro), {
+    stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
   })
-  child.stdout.setEncoding("utf8")
-  child.stderr.setEncoding("utf8")
+  child.stdin.end(script)
+
+  let settled = false
+  const recentOutput: string[] = []
+  const emit = (line: WslCommandLine) => {
+    if (settled || !line.text.trim()) return
+    recentOutput.push(`[${line.stream}] ${line.text}`)
+    if (recentOutput.length > 12) recentOutput.shift()
+    opts.onLine?.(line)
+  }
+
+  forwardLines(child.stdout, "stdout", emit)
+  forwardLines(child.stderr, "stderr", emit)
 
   const exit = new Promise<never>((_, reject) => {
     child.once("error", reject)
     child.once("exit", (code, signal) => {
-      reject(
-        new Error(
-          `WSL local server exited before becoming healthy (code=${code ?? "null"} signal=${signal ?? "null"})`,
-        ),
-      )
+      reject(new Error(startupFailure(code, signal, recentOutput)))
     })
   })
 
@@ -87,7 +102,9 @@ export async function spawnWslLocalServer(distro: string, port: number, password
       }
     })(),
     exit,
-  ])
+  ]).finally(() => {
+    settled = true
+  })
 
   return {
     listener: {
@@ -117,6 +134,29 @@ function prepareServerEnv(password: string) {
 
 function shellEscape(value: string) {
   return `'${value.replace(/'/g, `'"'"'`)}'`
+}
+
+function forwardLines(
+  stream: NodeJS.ReadableStream,
+  source: WslCommandLine["stream"],
+  onLine: (line: WslCommandLine) => void,
+) {
+  let pending = ""
+  stream.setEncoding("utf8")
+  stream.on("data", (chunk: string) => {
+    pending += chunk
+    const lines = pending.split(/\r?\n/g)
+    pending = lines.pop() ?? ""
+    for (const line of lines) onLine({ stream: source, text: line })
+  })
+  stream.on("end", () => {
+    if (pending) onLine({ stream: source, text: pending })
+  })
+}
+
+function startupFailure(code: number | null, signal: NodeJS.Signals | null, recentOutput: string[]) {
+  const suffix = recentOutput.length ? `\n${recentOutput.join("\n")}` : ""
+  return `WSL local server exited before becoming healthy (code=${code ?? "null"} signal=${signal ?? "null"})${suffix}`
 }
 
 export async function checkHealth(url: string, password?: string | null): Promise<boolean> {

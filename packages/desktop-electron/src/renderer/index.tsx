@@ -5,6 +5,7 @@ import {
   ACCEPTED_FILE_TYPES,
   AppBaseProviders,
   AppInterface,
+  DialogLocalServer,
   handleNotificationClick,
   loadLocaleDict,
   normalizeLocale,
@@ -23,6 +24,10 @@ import { initI18n, t } from "./i18n"
 import { UPDATER_ENABLED } from "./updater"
 import { webviewZoom } from "./webview-zoom"
 import "./styles.css"
+import { Button } from "@opencode-ai/ui/button"
+import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { Dialog } from "@opencode-ai/ui/dialog"
+import { Splash } from "@opencode-ai/ui/logo"
 import { useTheme } from "@opencode-ai/ui/theme"
 
 const root = document.getElementById("root")
@@ -46,6 +51,34 @@ const listenForDeepLinks = () => {
   const startUrls = window.__OPENCODE__?.deepLinks ?? []
   if (startUrls.length) emitDeepLinks(startUrls)
   return window.api.onDeepLink((urls) => emitDeepLinks(urls))
+}
+
+function LocalServerStartupError(props: { message: string }) {
+  const dialog = useDialog()
+
+  return (
+    <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base gap-6 p-6">
+      <div class="flex flex-col items-center max-w-md text-center">
+        <Splash class="w-12 h-15 mb-4" />
+        <p class="text-16-medium text-text-strong">Local Server failed to start</p>
+        <p class="mt-2 text-12-regular text-text-weak whitespace-pre-wrap break-words">{props.message}</p>
+        <Button
+          variant="secondary"
+          size="large"
+          class="mt-4"
+          onClick={() =>
+            dialog.show(() => (
+              <Dialog title="Local Server" dismissOutside={false}>
+                <DialogLocalServer />
+              </Dialog>
+            ))
+          }
+        >
+          Open Local Server
+        </Button>
+      </div>
+    </div>
+  )
 }
 
 const createPlatform = (): Platform => {
@@ -275,8 +308,19 @@ render(() => {
 
   const [windowCount] = createResource(() => window.api.getWindowCount())
 
-  // Fetch sidecar credentials (available immediately, before health check)
-  const [sidecar] = createResource(() => window.api.awaitInitialization(() => undefined))
+  const [startup] = createResource(async () => {
+    try {
+      return {
+        error: null,
+        sidecar: await window.api.awaitInitialization(() => undefined),
+      }
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error.message : String(error),
+        sidecar: null,
+      }
+    }
+  })
 
   const [defaultServer] = createResource(() =>
     platform.getDefaultServer?.().then((url) => {
@@ -286,7 +330,7 @@ render(() => {
   const [locale] = createResource(loadLocale)
 
   const servers = () => {
-    const data = sidecar()
+    const data = startup.latest?.sidecar
     if (!data) return []
     const server: ServerConnection.Sidecar = {
       displayName: "Local Server",
@@ -339,12 +383,16 @@ render(() => {
   return (
     <PlatformProvider value={platform}>
       <AppBaseProviders locale={locale.latest}>
-        <Show when={!defaultServer.loading && !sidecar.loading && !windowCount.loading && !locale.loading}>
+        <Show when={!defaultServer.loading && !startup.loading && !windowCount.loading && !locale.loading}>
           {(_) => {
+            if (startup.latest?.error) {
+              return <LocalServerStartupError message={startup.latest.error} />
+            }
             return (
               <AppInterface
                 defaultServer={
-                  defaultServer.latest ?? ServerConnection.Key.make(sidecar.latest?.local.key ?? "local:windows")
+                  defaultServer.latest ??
+                  ServerConnection.Key.make(startup.latest?.sidecar?.local.key ?? "local:windows")
                 }
                 servers={servers()}
                 router={MemoryRouter}
