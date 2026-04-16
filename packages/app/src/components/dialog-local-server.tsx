@@ -44,6 +44,19 @@ export function DialogLocalServer() {
   const busy = createMemo(() => !!current()?.job)
   const mode = createMemo(() => current()?.config.mode ?? "windows")
   const selected = createMemo(() => current()?.checks.distro?.selected)
+  const configuredRuntime = createMemo(() => {
+    const state = current()
+    if (!state) return { mode: "windows" as const, distro: null as string | null }
+    if (state.config.mode === "wsl" && state.config.distro) {
+      return { mode: "wsl" as const, distro: state.config.distro }
+    }
+    return { mode: "windows" as const, distro: null as string | null }
+  })
+  const needsRestart = createMemo(() => {
+    const state = current()
+    if (!state) return false
+    return state.runtime.mode !== configuredRuntime().mode || state.runtime.distro !== configuredRuntime().distro
+  })
 
   const run = async (action: () => Promise<void>) => {
     try {
@@ -117,6 +130,14 @@ export function DialogLocalServer() {
               ? `wsl${current()?.runtime.distro ? `:${current()?.runtime.distro}` : ""}`
               : "windows"}
           </div>
+          <Show when={needsRestart()}>
+            <div class="rounded-md border border-border-weak-base px-3 py-3 flex items-center justify-between gap-3">
+              <div class="text-12-regular text-text-weak">Restart OpenCode to apply local runtime changes.</div>
+              <Button variant="secondary" size="large" onClick={() => void platform.restart()}>
+                Restart OpenCode
+              </Button>
+            </div>
+          </Show>
         </div>
 
         <Show when={mode() === "wsl"}>
