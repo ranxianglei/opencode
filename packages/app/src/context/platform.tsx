@@ -9,6 +9,96 @@ type OpenFilePickerOptions = { title?: string; multiple?: boolean; accept?: stri
 type SaveFilePickerOptions = { title?: string; defaultPath?: string }
 type UpdateInfo = { updateAvailable: boolean; version?: string }
 
+export type LocalServerMode = "windows" | "wsl"
+export type LocalServerStep = "wsl" | "distro" | "opencode" | "switch"
+export type LocalServerMismatchAcknowledgement = {
+  path: string
+  version: string
+}
+export type LocalServerWslCheck = {
+  available: boolean
+  version: string | null
+  status: string | null
+  error: string | null
+}
+export type LocalServerInstalledDistro = {
+  name: string
+  state: string | null
+  version: number | null
+  isDefault: boolean
+}
+export type LocalServerOnlineDistro = {
+  name: string
+  label: string
+}
+export type LocalServerDistroProbe = {
+  name: string
+  canExecute: boolean
+  hasBash: boolean
+  hasCurl: boolean
+  username: string | null
+  isRoot: boolean | null
+  error: string | null
+}
+export type LocalServerDistroCheck = {
+  installed: LocalServerInstalledDistro[]
+  online: LocalServerOnlineDistro[]
+  selected: LocalServerDistroProbe | null
+  error: string | null
+}
+export type LocalServerTranscriptLine = {
+  stream: "stdout" | "stderr" | "system"
+  text: string
+  at: number
+}
+export type LocalServerConfig = {
+  mode: LocalServerMode
+  distro: string | null
+  onboarding: {
+    step: LocalServerStep | null
+    complete: boolean
+    pendingRestart: boolean
+  }
+  acknowledgements: {
+    root: string[]
+    mismatch: LocalServerMismatchAcknowledgement[]
+  }
+}
+export type LocalServerStatus =
+  | { kind: "idle" }
+  | { kind: "ready" }
+  | { kind: "running"; step: LocalServerStep | null }
+  | { kind: "failed"; step: LocalServerStep | null; message: string }
+export type LocalServerState = {
+  config: LocalServerConfig
+  runtime: {
+    key: string
+    mode: LocalServerMode
+    distro: string | null
+  }
+  status: LocalServerStatus
+  job: { step: LocalServerStep | null; startedAt: number } | null
+  checks: {
+    wsl: LocalServerWslCheck | null
+    distro: LocalServerDistroCheck | null
+  }
+  transcript: LocalServerTranscriptLine[]
+}
+export type LocalServerEvent = {
+  type: "state"
+  state: LocalServerState
+}
+export type LocalServerPlatform = {
+  getState(): Promise<LocalServerState>
+  setConfig(config: LocalServerConfig): Promise<void>
+  runStep(step: LocalServerStep): Promise<void>
+  cancelJob(): Promise<void>
+  installWsl(): Promise<void>
+  installDistro(name: string): Promise<void>
+  openTerminal(): Promise<void>
+  subscribe(cb: (event: LocalServerEvent) => void): () => void
+}
+
 export type Platform = {
   /** Platform discriminator */
   platform: "web" | "desktop"
@@ -63,6 +153,9 @@ export type Platform = {
 
   /** Set the default server URL to use on app startup (platform-specific) */
   setDefaultServer?(url: ServerConnection.Key | null): Promise<void> | void
+
+  /** Manage the desktop Local Server lifecycle (desktop only) */
+  localServer?: LocalServerPlatform
 
   /** Get the configured WSL integration (desktop only) */
   getWslEnabled?(): Promise<boolean>

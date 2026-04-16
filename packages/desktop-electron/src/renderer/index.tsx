@@ -214,6 +214,17 @@ const createPlatform = (): Platform => {
       await window.api.setDefaultServerUrl(url)
     },
 
+    localServer: {
+      getState: () => window.api.localServer.getState(),
+      setConfig: (config) => window.api.localServer.setConfig(config),
+      runStep: (step) => window.api.localServer.runStep(step),
+      cancelJob: () => window.api.localServer.cancelJob(),
+      installWsl: () => window.api.localServer.installWsl(),
+      installDistro: (name) => window.api.localServer.installDistro(name),
+      openTerminal: () => window.api.localServer.openTerminal(),
+      subscribe: (cb) => window.api.localServer.subscribe(cb),
+    },
+
     getDisplayBackend: async () => {
       return window.api.getDisplayBackend().catch(() => null)
     },
