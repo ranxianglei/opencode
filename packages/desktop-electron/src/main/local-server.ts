@@ -26,6 +26,11 @@ export function createLocalServerController() {
     for (const listener of listeners) listener(event)
   }
 
+  const update = (next: LocalServerState) => {
+    state = next
+    emit({ type: "state", state })
+  }
+
   return {
     getState() {
       return state
@@ -33,12 +38,26 @@ export function createLocalServerController() {
     setConfig(config: LocalServerConfig) {
       const next = normalizeLocalServerConfig(config)
       store.set(LOCAL_SERVER_KEY, next)
-      state = toState(next, state)
-      emit({ type: "state", state })
+      update({
+        ...state,
+        config: next,
+      })
     },
     subscribe(listener: (event: LocalServerEvent) => void) {
       listeners.add(listener)
       return () => listeners.delete(listener)
+    },
+    setRuntime(runtime: LocalServerState["runtime"]) {
+      update({
+        ...state,
+        runtime,
+      })
+    },
+    setStatus(status: LocalServerState["status"]) {
+      update({
+        ...state,
+        status,
+      })
     },
   }
 }
@@ -50,11 +69,7 @@ function readLocalServerConfig() {
 function toState(config: LocalServerConfig, current?: LocalServerState): LocalServerState {
   return {
     config,
-    runtime: {
-      key: localServerKey(config),
-      mode: config.mode,
-      distro: config.distro,
-    },
+    runtime: current?.runtime ?? windowsRuntime(),
     status: current?.status ?? { kind: "idle" },
     job: current?.job ?? null,
   }
@@ -113,4 +128,15 @@ function localServerKey(config: LocalServerConfig) {
   if (config.mode === "windows") return "local:windows"
   if (!config.distro) return "local:wsl"
   return `local:wsl:${config.distro}`
+}
+
+function windowsRuntime(): LocalServerState["runtime"] {
+  return {
+    key: localServerKey({
+      ...defaultLocalServerConfig(),
+      mode: "windows",
+    }),
+    mode: "windows",
+    distro: null,
+  }
 }

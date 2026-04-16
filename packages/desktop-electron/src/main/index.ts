@@ -142,7 +142,16 @@ async function initialize() {
   const password = randomUUID()
 
   logger.log("spawning sidecar", { url })
-  const { listener, health } = await spawnLocalServer(hostname, port, password)
+  localServer.setRuntime({ key: "local:windows", mode: "windows", distro: null })
+  localServer.setStatus({ kind: "running", step: null })
+  const { listener, health } = await spawnLocalServer(hostname, port, password).catch((error) => {
+    localServer.setStatus({
+      kind: "failed",
+      step: null,
+      message: error instanceof Error ? error.message : String(error),
+    })
+    throw error
+  })
   server = listener
   serverReady.resolve({
     url,
@@ -169,9 +178,18 @@ async function initialize() {
       delay(30_000).then(() => {
         throw new Error("Sidecar health check timed out")
       }),
-    ]).catch((error) => {
-      logger.error("sidecar health check failed", error)
-    })
+    ])
+      .then(() => {
+        localServer.setStatus({ kind: "ready" })
+      })
+      .catch((error) => {
+        localServer.setStatus({
+          kind: "failed",
+          step: null,
+          message: error instanceof Error ? error.message : String(error),
+        })
+        logger.error("sidecar health check failed", error)
+      })
 
     logger.log("loading task finished")
   })()
