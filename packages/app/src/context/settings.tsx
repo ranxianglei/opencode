@@ -53,9 +53,13 @@ export const sansDefault = "System Sans"
 
 const monoFallback =
   'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'
+const terminalMonoFallback =
+  '"Symbols Nerd Font Mono", "Symbols Nerd Font", "JetBrainsMono NFM", "JetBrainsMono NF", "JetBrainsMono Nerd Font Mono", "Hack Nerd Font Mono", "Hack Nerd Font", "MesloLGM Nerd Font Mono", "MesloLGM Nerd Font", "CaskaydiaCove NFM", "CaskaydiaCove Nerd Font Mono", "CaskaydiaMono Nerd Font Mono", ' +
+  monoFallback
 const sansFallback = 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
 
 const monoBase = monoFallback
+const terminalMonoBase = terminalMonoFallback
 const sansBase = sansFallback
 
 function input(font: string | undefined) {
@@ -83,6 +87,10 @@ export function sansInput(font: string | undefined) {
 
 export function monoFontFamily(font: string | undefined) {
   return stack(font, monoBase)
+}
+
+export function terminalFontFamily(font: string | undefined) {
+  return stack(font, terminalMonoBase)
 }
 
 export function sansFontFamily(font: string | undefined) {
