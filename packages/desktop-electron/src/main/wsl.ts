@@ -244,24 +244,20 @@ export async function probeWslDistro(name: string, opts?: RunWslOptions): Promis
 }
 
 export async function resolveWslOpencode(distro: string, opts?: RunWslOptions) {
-  const result = await runWslBash(
-    [
-      'path="$(command -v opencode 2>/dev/null || true)"',
-      'for candidate in "$path" "${XDG_BIN_DIR:-$HOME/.local/bin}/opencode" "$HOME/bin/opencode" "$HOME/.opencode/bin/opencode" "/usr/local/bin/opencode"; do',
-      '  [ -n "$candidate" ] || continue',
-      '  case "$candidate" in',
-      "    /mnt/*) continue ;;",
-      "  esac",
-      '  if [ -x "$candidate" ]; then',
-      '    printf "%s\\n" "$candidate"',
-      "    exit 0",
-      "  fi",
-      "done",
-    ].join("\n"),
-    distro,
-    opts,
-  )
-  return firstLine(result.stdout)
+  const command = firstLine((await runWslSh("command -v opencode 2>/dev/null || true", distro, opts)).stdout)
+  if (command && !command.startsWith("/mnt/")) return command
+
+  for (const candidate of [
+    'if [ -x "${XDG_BIN_DIR:-$HOME/.local/bin}/opencode" ]; then printf "%s\\n" "${XDG_BIN_DIR:-$HOME/.local/bin}/opencode"; fi',
+    'if [ -x "$HOME/bin/opencode" ]; then printf "%s\\n" "$HOME/bin/opencode"; fi',
+    'if [ -x "$HOME/.opencode/bin/opencode" ]; then printf "%s\\n" "$HOME/.opencode/bin/opencode"; fi',
+    'if [ -x "/usr/local/bin/opencode" ]; then printf "%s\\n" "/usr/local/bin/opencode"; fi',
+  ]) {
+    const resolved = firstLine((await runWslSh(candidate, distro, opts)).stdout)
+    if (resolved) return resolved
+  }
+
+  return null
 }
 
 export async function readWslCommandVersion(command: string, distro: string, opts?: RunWslOptions) {
