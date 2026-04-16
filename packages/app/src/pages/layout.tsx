@@ -83,9 +83,16 @@ import {
   LocalWorkspace,
   SortableWorkspace,
   WorkspaceDragOverlay,
+  workspaceSortableDirectory,
+  workspaceSortableId,
   type WorkspaceSidebarContext,
 } from "./layout/sidebar-workspace"
-import { ProjectDragOverlay, SortableProject, type ProjectSidebarContext } from "./layout/sidebar-project"
+import {
+  ProjectDragOverlay,
+  SortableProject,
+  projectSortableWorktree,
+  type ProjectSidebarContext,
+} from "./layout/sidebar-project"
 import { SidebarContent } from "./layout/sidebar-shell"
 
 export default function Layout(props: ParentProps) {
@@ -1841,7 +1848,7 @@ export default function Layout(props: ParentProps) {
   )
 
   function handleDragStart(event: unknown) {
-    const id = getDraggableId(event)
+    const id = projectSortableWorktree(getDraggableId(event))
     if (!id) return
     setHoverProject(undefined)
     setStore("activeProject", id)
@@ -1850,11 +1857,14 @@ export default function Layout(props: ParentProps) {
   function handleDragOver(event: DragEvent) {
     const { draggable, droppable } = event
     if (draggable && droppable) {
+      const from = projectSortableWorktree(draggable.id?.toString())
+      const to = projectSortableWorktree(droppable.id?.toString())
+      if (!from || !to) return
       const projects = layout.projects.list()
-      const fromIndex = projects.findIndex((p) => p.worktree === draggable.id.toString())
-      const toIndex = projects.findIndex((p) => p.worktree === droppable.id.toString())
+      const fromIndex = projects.findIndex((p) => p.worktree === from)
+      const toIndex = projects.findIndex((p) => p.worktree === to)
       if (fromIndex !== toIndex && toIndex !== -1) {
-        layout.projects.move(draggable.id.toString(), toIndex)
+        layout.projects.move(from, toIndex)
       }
     }
   }
@@ -1892,7 +1902,7 @@ export default function Layout(props: ParentProps) {
   })
 
   function handleWorkspaceDragStart(event: unknown) {
-    const id = getDraggableId(event)
+    const id = workspaceSortableDirectory(getDraggableId(event))
     if (!id) return
     setStore("activeWorkspace", id)
   }
@@ -1900,13 +1910,16 @@ export default function Layout(props: ParentProps) {
   function handleWorkspaceDragOver(event: DragEvent) {
     const { draggable, droppable } = event
     if (!draggable || !droppable) return
+    const from = workspaceSortableDirectory(draggable.id?.toString())
+    const to = workspaceSortableDirectory(droppable.id?.toString())
+    if (!from || !to) return
 
     const project = sidebarProject()
     if (!project) return
 
     const ids = workspaceIds(project)
-    const fromIndex = ids.findIndex((dir) => dir === draggable.id.toString())
-    const toIndex = ids.findIndex((dir) => dir === droppable.id.toString())
+    const fromIndex = ids.findIndex((dir) => dir === from)
+    const toIndex = ids.findIndex((dir) => dir === to)
     if (fromIndex === -1 || toIndex === -1) return
     if (fromIndex === toIndex) return
 
@@ -2267,13 +2280,13 @@ export default function Layout(props: ParentProps) {
                           }}
                           class="size-full flex flex-col py-2 gap-4 overflow-y-auto no-scrollbar [overflow-anchor:none]"
                         >
-                          <SortableProvider ids={workspaces()}>
+                          <SortableProvider ids={workspaces().map(workspaceSortableId)}>
                             <For each={workspaces()}>
                               {(directory) => (
                                 <SortableWorkspace
                                   ctx={workspaceSidebarCtx}
                                   directory={directory}
-                                  project={project()}
+                                  project={project()!}
                                   sortNow={sortNow}
                                   mobile={panelProps.mobile}
                                 />

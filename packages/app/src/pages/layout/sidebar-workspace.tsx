@@ -54,6 +54,17 @@ export type WorkspaceSidebarContext = {
   setScrollContainerRef: (el: HTMLDivElement | undefined, mobile?: boolean) => void
 }
 
+const WORKSPACE_SORTABLE_PREFIX = "workspace:"
+
+export function workspaceSortableId(directory: string) {
+  return `${WORKSPACE_SORTABLE_PREFIX}${directory}`
+}
+
+export function workspaceSortableDirectory(id: string | undefined) {
+  if (!id?.startsWith(WORKSPACE_SORTABLE_PREFIX)) return
+  return id.slice(WORKSPACE_SORTABLE_PREFIX.length)
+}
+
 export const WorkspaceDragOverlay = (props: {
   sidebarProject: Accessor<LocalProject | undefined>
   activeWorkspace: Accessor<string | undefined>
@@ -300,7 +311,7 @@ export const SortableWorkspace = (props: {
   const params = useParams()
   const globalSync = useGlobalSync()
   const language = useLanguage()
-  const sortable = createSortable(props.directory)
+  const sortable = createSortable(workspaceSortableId(props.directory))
   const [workspaceStore, setWorkspaceStore] = globalSync.child(props.directory, { bootstrap: false })
   const [menu, setMenu] = createStore({
     open: false,
