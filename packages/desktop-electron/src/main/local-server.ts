@@ -1,6 +1,13 @@
-import type { LocalServerConfig, LocalServerEvent, LocalServerState, LocalServerStep } from "../preload/types"
+import type {
+  LocalServerConfig,
+  LocalServerDistroCheck,
+  LocalServerEvent,
+  LocalServerState,
+  LocalServerStep,
+} from "../preload/types"
 import { LOCAL_SERVER_KEY } from "./constants"
 import { store } from "./store"
+import { listInstalledWslDistros, listOnlineWslDistros, probeWslDistro, probeWslRuntime } from "./wsl"
 
 export function defaultLocalServerConfig(): LocalServerConfig {
   return {
@@ -21,6 +28,7 @@ export function defaultLocalServerConfig(): LocalServerConfig {
 export function createLocalServerController() {
   let state = toState(readLocalServerConfig())
   const listeners = new Set<(event: LocalServerEvent) => void>()
+  let jobAbort: AbortController | undefined
 
   const emit = (event: LocalServerEvent) => {
     for (const listener of listeners) listener(event)
@@ -47,6 +55,101 @@ export function createLocalServerController() {
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
+    async runStep(step: LocalServerStep) {
+      jobAbort?.abort()
+      const abort = new AbortController()
+      jobAbort = abort
+      update({
+        ...state,
+        job: { step, startedAt: Date.now() },
+        status: { kind: "running", step },
+      })
+
+      try {
+        if (step === "wsl") {
+          const wsl = await probeWslRuntime({ signal: abort.signal })
+          if (jobAbort !== abort) return
+          update({
+            ...state,
+            job: null,
+            status: wsl.available
+              ? { kind: "ready" }
+              : { kind: "failed", step, message: wsl.error ?? "WSL is unavailable" },
+            checks: {
+              ...state.checks,
+              wsl,
+            },
+          })
+          return
+        }
+
+        if (step === "distro") {
+          const [installedResult, onlineResult] = await Promise.allSettled([
+            listInstalledWslDistros({ signal: abort.signal }),
+            listOnlineWslDistros({ signal: abort.signal }),
+          ])
+          if (jobAbort !== abort) return
+
+          const installed = installedResult.status === "fulfilled" ? installedResult.value : []
+          const online = onlineResult.status === "fulfilled" ? onlineResult.value : []
+          const selected = state.config.distro
+            ? await probeWslDistro(state.config.distro, { signal: abort.signal })
+            : null
+          if (jobAbort !== abort) return
+
+          const error = distroError(state.config.distro, installed, selected, installedResult, onlineResult)
+          const distro: LocalServerDistroCheck = {
+            installed,
+            online,
+            selected,
+            error,
+          }
+
+          update({
+            ...state,
+            job: null,
+            status: error ? { kind: "failed", step, message: error } : { kind: "ready" },
+            checks: {
+              ...state.checks,
+              distro,
+            },
+          })
+          return
+        }
+
+        update({
+          ...state,
+          job: null,
+          status: { kind: "idle" },
+        })
+      } catch (error) {
+        if (jobAbort !== abort) return
+        if (error instanceof Error && error.name === "AbortError") {
+          update({
+            ...state,
+            job: null,
+            status: { kind: "idle" },
+          })
+          return
+        }
+        update({
+          ...state,
+          job: null,
+          status: { kind: "failed", step, message: error instanceof Error ? error.message : String(error) },
+        })
+      } finally {
+        if (jobAbort === abort) jobAbort = undefined
+      }
+    },
+    cancelJob() {
+      jobAbort?.abort()
+      jobAbort = undefined
+      update({
+        ...state,
+        job: null,
+        status: { kind: "idle" },
+      })
+    },
     setRuntime(runtime: LocalServerState["runtime"]) {
       update({
         ...state,
@@ -72,6 +175,7 @@ function toState(config: LocalServerConfig, current?: LocalServerState): LocalSe
     runtime: current?.runtime ?? windowsRuntime(),
     status: current?.status ?? { kind: "idle" },
     job: current?.job ?? null,
+    checks: current?.checks ?? { wsl: null, distro: null },
   }
 }
 
@@ -139,4 +243,24 @@ function windowsRuntime(): LocalServerState["runtime"] {
     mode: "windows",
     distro: null,
   }
+}
+
+function distroError(
+  configured: string | null,
+  installed: LocalServerDistroCheck["installed"],
+  selected: LocalServerDistroCheck["selected"],
+  installedResult: PromiseSettledResult<LocalServerDistroCheck["installed"]>,
+  onlineResult: PromiseSettledResult<LocalServerDistroCheck["online"]>,
+) {
+  if (installedResult.status === "rejected") {
+    return installedResult.reason instanceof Error ? installedResult.reason.message : String(installedResult.reason)
+  }
+  if (onlineResult.status === "rejected") {
+    return onlineResult.reason instanceof Error ? onlineResult.reason.message : String(onlineResult.reason)
+  }
+  if (configured && !installed.find((item) => item.name === configured)) {
+    return `Selected distro is not installed: ${configured}`
+  }
+  if (selected?.error) return selected.error
+  return null
 }

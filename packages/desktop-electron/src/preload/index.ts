@@ -14,6 +14,8 @@ const api: ElectronAPI = {
   localServer: {
     getState: () => ipcRenderer.invoke("local-server-get-state"),
     setConfig: (config) => ipcRenderer.invoke("local-server-set-config", config),
+    runStep: (step) => ipcRenderer.invoke("local-server-run-step", step),
+    cancelJob: () => ipcRenderer.invoke("local-server-cancel-job"),
     subscribe: (cb) => {
       const handler = (_: unknown, event: LocalServerEvent) => cb(event)
       ipcRenderer.on("local-server-event", handler)

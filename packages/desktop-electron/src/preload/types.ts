@@ -14,6 +14,37 @@ export type LocalServerMismatchAcknowledgement = {
   path: string
   version: string
 }
+export type LocalServerWslCheck = {
+  available: boolean
+  version: string | null
+  status: string | null
+  error: string | null
+}
+export type LocalServerInstalledDistro = {
+  name: string
+  state: string | null
+  version: number | null
+  isDefault: boolean
+}
+export type LocalServerOnlineDistro = {
+  name: string
+  label: string
+}
+export type LocalServerDistroProbe = {
+  name: string
+  canExecute: boolean
+  hasBash: boolean
+  hasCurl: boolean
+  username: string | null
+  isRoot: boolean | null
+  error: string | null
+}
+export type LocalServerDistroCheck = {
+  installed: LocalServerInstalledDistro[]
+  online: LocalServerOnlineDistro[]
+  selected: LocalServerDistroProbe | null
+  error: string | null
+}
 export type LocalServerConfig = {
   mode: LocalServerMode
   distro: string | null
@@ -41,6 +72,10 @@ export type LocalServerState = {
   }
   status: LocalServerStatus
   job: { step: LocalServerStep | null; startedAt: number } | null
+  checks: {
+    wsl: LocalServerWslCheck | null
+    distro: LocalServerDistroCheck | null
+  }
 }
 export type LocalServerEvent = {
   type: "state"
@@ -49,6 +84,8 @@ export type LocalServerEvent = {
 export type LocalServerAPI = {
   getState: () => Promise<LocalServerState>
   setConfig: (config: LocalServerConfig) => Promise<void>
+  runStep: (step: LocalServerStep) => Promise<void>
+  cancelJob: () => Promise<void>
   subscribe: (cb: (event: LocalServerEvent) => void) => () => void
 }
 

@@ -1,4 +1,10 @@
 import { spawn } from "node:child_process"
+import type {
+  LocalServerDistroProbe,
+  LocalServerInstalledDistro,
+  LocalServerOnlineDistro,
+  LocalServerWslCheck,
+} from "../preload/types"
 
 export type WslCommandLine = {
   stream: "stdout" | "stderr"
@@ -10,35 +16,6 @@ export type WslCommandResult = {
   signal: NodeJS.Signals | null
   stdout: string
   stderr: string
-}
-
-export type WslRuntimeProbe = {
-  available: boolean
-  version: string | null
-  status: string | null
-  error: string | null
-}
-
-export type WslInstalledDistro = {
-  name: string
-  state: string | null
-  version: number | null
-  isDefault: boolean
-}
-
-export type WslOnlineDistro = {
-  name: string
-  label: string
-}
-
-export type WslDistroProbe = {
-  name: string
-  canExecute: boolean
-  hasBash: boolean
-  hasCurl: boolean
-  username: string | null
-  isRoot: boolean | null
-  error: string | null
 }
 
 type RunWslOptions = {
@@ -113,8 +90,8 @@ export function runWslBash(script: string, distro?: string | null, opts?: RunWsl
   return runWslInDistro(["bash", "-lc", script], distro, opts)
 }
 
-export async function probeWslRuntime(): Promise<WslRuntimeProbe> {
-  const version = await runWsl(["--version"]).catch((error) => ({
+export async function probeWslRuntime(opts?: RunWslOptions): Promise<LocalServerWslCheck> {
+  const version = await runWsl(["--version"], opts).catch((error) => ({
     code: 1,
     signal: null,
     stdout: "",
@@ -130,7 +107,7 @@ export async function probeWslRuntime(): Promise<WslRuntimeProbe> {
     }
   }
 
-  const status = await runWsl(["--status"]).catch(() => undefined)
+  const status = await runWsl(["--status"], opts).catch(() => undefined)
   return {
     available: true,
     version: firstLine(version.stdout),
@@ -139,16 +116,16 @@ export async function probeWslRuntime(): Promise<WslRuntimeProbe> {
   }
 }
 
-export async function listInstalledWslDistros() {
-  const result = await runWsl(["--list", "--verbose"])
+export async function listInstalledWslDistros(opts?: RunWslOptions) {
+  const result = await runWsl(["--list", "--verbose"], opts)
   if (result.code !== 0) {
     throw new Error(summarize(result.stderr || result.stdout) || "Failed to list installed WSL distros")
   }
   return parseInstalledDistros(result.stdout)
 }
 
-export async function listOnlineWslDistros() {
-  const result = await runWsl(["--list", "--online"])
+export async function listOnlineWslDistros(opts?: RunWslOptions) {
+  const result = await runWsl(["--list", "--online"], opts)
   if (result.code !== 0) {
     throw new Error(summarize(result.stderr || result.stdout) || "Failed to list online WSL distros")
   }
@@ -163,8 +140,8 @@ export async function installWslDistro(name: string, opts?: RunWslOptions) {
   return runWsl(["--install", "-d", name, "--web-download", "--no-launch"], opts)
 }
 
-export async function probeWslDistro(name: string): Promise<WslDistroProbe> {
-  const executable = await runWslInDistro(["/bin/true"], name).catch((error) => ({
+export async function probeWslDistro(name: string, opts?: RunWslOptions): Promise<LocalServerDistroProbe> {
+  const executable = await runWslInDistro(["/bin/true"], name, opts).catch((error) => ({
     code: 1,
     signal: null,
     stdout: "",
@@ -183,9 +160,9 @@ export async function probeWslDistro(name: string): Promise<WslDistroProbe> {
   }
 
   const [bash, curl, user] = await Promise.all([
-    runWslSh("command -v bash >/dev/null && printf yes || printf no", name),
-    runWslSh("command -v curl >/dev/null && printf yes || printf no", name),
-    runWslSh("id -un 2>/dev/null || true", name),
+    runWslSh("command -v bash >/dev/null && printf yes || printf no", name, opts),
+    runWslSh("command -v curl >/dev/null && printf yes || printf no", name, opts),
+    runWslSh("id -un 2>/dev/null || true", name, opts),
   ])
 
   const username = summarize(user.stdout)
@@ -228,7 +205,7 @@ function parseInstalledDistros(output: string) {
         state: state || null,
         version: Number.isNaN(Number.parseInt(version, 10)) ? null : Number.parseInt(version, 10),
         isDefault: marker === "*",
-      } satisfies WslInstalledDistro,
+      } satisfies LocalServerInstalledDistro,
     ]
   })
 }
@@ -241,7 +218,7 @@ function parseOnlineDistros(output: string) {
     if (!match) return []
     const [, name, label] = match
     if (/^name$/i.test(name)) return []
-    return [{ name, label: label.trim() } satisfies WslOnlineDistro]
+    return [{ name, label: label.trim() } satisfies LocalServerOnlineDistro]
   })
 }
 

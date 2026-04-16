@@ -7,6 +7,7 @@ import type {
   LocalServerConfig,
   LocalServerEvent,
   LocalServerState,
+  LocalServerStep,
   ServerReadyData,
   SqliteMigrationProgress,
   TitlebarTheme,
@@ -24,6 +25,8 @@ type Deps = {
   awaitInitialization: (sendStep: (step: InitStep) => void) => Promise<ServerReadyData>
   getLocalServerState: () => Promise<LocalServerState> | LocalServerState
   setLocalServerConfig: (config: LocalServerConfig) => Promise<void> | void
+  runLocalServerStep: (step: LocalServerStep) => Promise<void> | void
+  cancelLocalServerJob: () => Promise<void> | void
   onLocalServerEvent: (listener: (event: LocalServerEvent) => void) => () => void
   getDefaultServerUrl: () => Promise<string | null> | string | null
   setDefaultServerUrl: (url: string | null) => Promise<void> | void
