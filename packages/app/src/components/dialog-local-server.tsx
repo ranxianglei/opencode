@@ -4,7 +4,7 @@ import { showToast } from "@opencode-ai/ui/toast"
 import { createEffect, createMemo, For, Match, on, onCleanup, Show, Switch } from "solid-js"
 import { createStore, reconcile, unwrap } from "solid-js/store"
 import { useLanguage } from "@/context/language"
-import type { LocalServerConfig, LocalServerState, LocalServerStep } from "@/context/platform"
+import type { LocalServerConfig, LocalServerMode, LocalServerState, LocalServerStep } from "@/context/platform"
 import { usePlatform } from "@/context/platform"
 
 const WSL_STEPS: LocalServerStep[] = ["wsl", "distro", "opencode", "switch"]
@@ -105,6 +105,10 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
     }
     return { mode: "windows" as const, distro: null as string | null }
   })
+  const configuredRuntimeLabel = createMemo(() => runtimeLabel(configuredRuntime().mode, configuredRuntime().distro))
+  const currentRuntimeLabel = createMemo(() =>
+    runtimeLabel(current()?.runtime.mode ?? "windows", current()?.runtime.distro ?? null),
+  )
   const needsRestart = createMemo(() => {
     const state = current()
     if (!state) return false
@@ -533,22 +537,20 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
 
               <div class="text-12-regular text-text-weak whitespace-pre-wrap break-words">
                 {targetMode() === "windows"
-                  ? configuredRuntime().mode === "windows"
-                    ? "Restart OpenCode to finish switching back to Windows."
-                    : "Switch the Local Server target back to Windows."
+                  ? needsRestart()
+                    ? "Restart OpenCode to switch back to Windows."
+                    : "Windows Local Server is active."
                   : needsRestart()
-                    ? "Restart OpenCode to finish switching to WSL."
-                    : "WSL Local Server is active."}
+                    ? `Restart OpenCode to start using ${configuredRuntimeLabel()}.`
+                    : `${configuredRuntimeLabel()} is active.`}
               </div>
 
               <div class="rounded-md border border-border-weak-base px-3 py-3 flex flex-col gap-1">
                 <div class="text-12-regular text-text-weak">
-                  Configured:{" "}
-                  {configuredRuntime().mode === "wsl" ? `wsl:${configuredRuntime().distro ?? "unknown"}` : "windows"}
+                  After restart: <span class="text-text-strong">{configuredRuntimeLabel()}</span>
                 </div>
                 <div class="text-12-regular text-text-weak">
-                  Current:{" "}
-                  {current()?.runtime.mode === "wsl" ? `wsl:${current()?.runtime.distro ?? "unknown"}` : "windows"}
+                  Using now: <span class="text-text-strong">{currentRuntimeLabel()}</span>
                 </div>
                 <Show when={targetMode() === "wsl" && !switchReady()}>
                   <div class="text-12-regular text-text-warning-base">Complete the earlier steps first.</div>
@@ -624,6 +626,11 @@ function stepTitle(step: LocalServerStep) {
   if (step === "distro") return "Choose distro"
   if (step === "opencode") return "OpenCode"
   return "Switch"
+}
+
+function runtimeLabel(mode: LocalServerMode, distro: string | null) {
+  if (mode === "windows") return "Windows"
+  return distro ? `WSL on ${distro}` : "WSL"
 }
 
 function stepState(
