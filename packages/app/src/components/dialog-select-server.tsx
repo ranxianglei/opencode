@@ -11,6 +11,7 @@ import { showToast } from "@opencode-ai/ui/toast"
 import { useNavigate } from "@solidjs/router"
 import { createEffect, createMemo, createResource, onCleanup, Show } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
+import { DialogLocalServer } from "@/components/dialog-local-server"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
@@ -190,6 +191,9 @@ export function DialogSelectServer() {
       error: "",
       showForm: false,
       status: undefined as boolean | undefined,
+    },
+    localServer: {
+      showPage: false,
     },
     editServer: {
       id: undefined as string | undefined,
@@ -419,7 +423,8 @@ export function DialogSelectServer() {
     )
   }
 
-  const mode = createMemo<"list" | "add" | "edit">(() => {
+  const mode = createMemo<"list" | "local" | "add" | "edit">(() => {
+    if (store.localServer.showPage) return "local"
     if (store.editServer.id) return "edit"
     if (store.addServer.showForm) return "add"
     return "list"
@@ -433,9 +438,11 @@ export function DialogSelectServer() {
   const resetForm = () => {
     resetAdd()
     resetEdit()
+    setStore("localServer", "showPage", false)
   }
 
   const startAdd = () => {
+    setStore("localServer", "showPage", false)
     resetEdit()
     setStore("addServer", {
       showForm: true,
@@ -449,6 +456,7 @@ export function DialogSelectServer() {
   }
 
   const startEdit = (conn: ServerConnection.Http) => {
+    setStore("localServer", "showPage", false)
     resetAdd()
     setStore("editServer", {
       id: conn.http.url,
@@ -459,6 +467,12 @@ export function DialogSelectServer() {
       error: "",
       status: store.status[ServerConnection.key(conn)]?.healthy,
     })
+  }
+
+  const startLocal = () => {
+    resetAdd()
+    resetEdit()
+    setStore("localServer", "showPage", true)
   }
 
   const submitForm = () => {
@@ -477,6 +491,7 @@ export function DialogSelectServer() {
 
   const isFormMode = createMemo(() => mode() !== "list")
   const isAddMode = createMemo(() => mode() === "add")
+  const isLocalMode = createMemo(() => mode() === "local")
   const formBusy = createMemo(() => (isAddMode() ? addMutation.isPending : editMutation.isPending))
 
   const formTitle = createMemo(() => {
@@ -484,7 +499,13 @@ export function DialogSelectServer() {
     return (
       <div class="flex items-center gap-2 -ml-2">
         <IconButton icon="arrow-left" variant="ghost" onClick={resetForm} aria-label={language.t("common.goBack")} />
-        <span>{isAddMode() ? language.t("dialog.server.add.title") : language.t("dialog.server.edit.title")}</span>
+        <span>
+          {isLocalMode()
+            ? "Local Server"
+            : isAddMode()
+              ? language.t("dialog.server.add.title")
+              : language.t("dialog.server.edit.title")}
+        </span>
       </div>
     )
   })
@@ -508,130 +529,156 @@ export function DialogSelectServer() {
         <Show
           when={!isFormMode()}
           fallback={
-            <ServerForm
-              value={isAddMode() ? store.addServer.url : store.editServer.value}
-              name={isAddMode() ? store.addServer.name : store.editServer.name}
-              username={isAddMode() ? store.addServer.username : store.editServer.username}
-              password={isAddMode() ? store.addServer.password : store.editServer.password}
-              placeholder={language.t("dialog.server.add.placeholder")}
-              busy={formBusy()}
-              error={isAddMode() ? store.addServer.error : store.editServer.error}
-              status={isAddMode() ? store.addServer.status : store.editServer.status}
-              onChange={isAddMode() ? handleAddChange : handleEditChange}
-              onNameChange={isAddMode() ? handleAddNameChange : handleEditNameChange}
-              onUsernameChange={isAddMode() ? handleAddUsernameChange : handleEditUsernameChange}
-              onPasswordChange={isAddMode() ? handleAddPasswordChange : handleEditPasswordChange}
-              onSubmit={submitForm}
-              onBack={resetForm}
-            />
+            <Show
+              when={isLocalMode()}
+              fallback={
+                <ServerForm
+                  value={isAddMode() ? store.addServer.url : store.editServer.value}
+                  name={isAddMode() ? store.addServer.name : store.editServer.name}
+                  username={isAddMode() ? store.addServer.username : store.editServer.username}
+                  password={isAddMode() ? store.addServer.password : store.editServer.password}
+                  placeholder={language.t("dialog.server.add.placeholder")}
+                  busy={formBusy()}
+                  error={isAddMode() ? store.addServer.error : store.editServer.error}
+                  status={isAddMode() ? store.addServer.status : store.editServer.status}
+                  onChange={isAddMode() ? handleAddChange : handleEditChange}
+                  onNameChange={isAddMode() ? handleAddNameChange : handleEditNameChange}
+                  onUsernameChange={isAddMode() ? handleAddUsernameChange : handleEditUsernameChange}
+                  onPasswordChange={isAddMode() ? handleAddPasswordChange : handleEditPasswordChange}
+                  onSubmit={submitForm}
+                  onBack={resetForm}
+                />
+              }
+            >
+              <DialogLocalServer />
+            </Show>
           }
         >
-          <List
-            search={{
-              placeholder: language.t("dialog.server.search.placeholder"),
-              autofocus: false,
-            }}
-            noInitialSelection
-            emptyMessage={language.t("dialog.server.empty")}
-            items={sortedItems}
-            key={(x) => x.http.url}
-            onSelect={(x) => {
-              if (x) void select(x)
-            }}
-            divider={true}
-            class="px-5 [&_[data-slot=list-search-wrapper]]:w-full [&_[data-slot=list-scroll]]h-[300px] [&_[data-slot=list-scroll]]:overflow-y-auto [&_[data-slot=list-items]]:bg-surface-base [&_[data-slot=list-items]]:rounded-md [&_[data-slot=list-item]]:min-h-14 [&_[data-slot=list-item]]:p-3 [&_[data-slot=list-item]]:!bg-transparent"
-          >
-            {(i) => {
-              const key = ServerConnection.key(i)
-              return (
-                <div class="flex items-center gap-3 min-w-0 flex-1 w-full group/item">
-                  <div class="flex flex-col h-full items-start w-5">
-                    <ServerHealthIndicator health={store.status[key]} />
-                  </div>
-                  <ServerRow
-                    conn={i}
-                    dimmed={store.status[key]?.healthy === false}
-                    status={store.status[key]}
-                    class="flex items-center gap-3 min-w-0 flex-1"
-                    badge={
-                      <Show when={defaultKey() === ServerConnection.key(i)}>
-                        <span class="text-text-base bg-surface-base text-14-regular px-1.5 rounded-xs">
-                          {language.t("dialog.server.status.default")}
-                        </span>
-                      </Show>
-                    }
-                    showCredentials
-                  />
-                  <div class="flex items-center justify-center gap-4 pl-4">
-                    <Show when={ServerConnection.key(current()) === key}>
-                      <Icon name="check" class="h-6" />
-                    </Show>
+          <div class="flex flex-col gap-3">
+            <Show when={platform.localServer}>
+              <div class="px-5">
+                <button
+                  type="button"
+                  class="w-full rounded-md bg-surface-base px-4 py-3 text-left transition-colors hover:bg-surface-base-hover"
+                  onClick={startLocal}
+                >
+                  <div class="text-14-medium text-text-strong">Local Server</div>
+                  <div class="text-12-regular text-text-weak">Configure Windows or WSL local runtime</div>
+                </button>
+              </div>
+            </Show>
 
-                    <Show when={i.type === "http"}>
-                      <DropdownMenu>
-                        <DropdownMenu.Trigger
-                          as={IconButton}
-                          icon="dot-grid"
-                          variant="ghost"
-                          class="shrink-0 size-8 hover:bg-surface-base-hover data-[expanded]:bg-surface-base-active"
-                          onClick={(e: MouseEvent) => e.stopPropagation()}
-                          onPointerDown={(e: PointerEvent) => e.stopPropagation()}
-                        />
-                        <DropdownMenu.Portal>
-                          <DropdownMenu.Content class="mt-1">
-                            <DropdownMenu.Item
-                              onSelect={() => {
-                                if (i.type !== "http") return
-                                startEdit(i)
-                              }}
-                            >
-                              <DropdownMenu.ItemLabel>{language.t("dialog.server.menu.edit")}</DropdownMenu.ItemLabel>
-                            </DropdownMenu.Item>
-                            <Show when={canDefault() && defaultKey() !== key}>
-                              <DropdownMenu.Item onSelect={() => setDefault(key)}>
+            <List
+              search={{
+                placeholder: language.t("dialog.server.search.placeholder"),
+                autofocus: false,
+              }}
+              noInitialSelection
+              emptyMessage={language.t("dialog.server.empty")}
+              items={sortedItems}
+              key={(x) => x.http.url}
+              onSelect={(x) => {
+                if (x) void select(x)
+              }}
+              divider={true}
+              class="px-5 [&_[data-slot=list-search-wrapper]]:w-full [&_[data-slot=list-scroll]]h-[300px] [&_[data-slot=list-scroll]]:overflow-y-auto [&_[data-slot=list-items]]:bg-surface-base [&_[data-slot=list-items]]:rounded-md [&_[data-slot=list-item]]:min-h-14 [&_[data-slot=list-item]]:p-3 [&_[data-slot=list-item]]:!bg-transparent"
+            >
+              {(i) => {
+                const key = ServerConnection.key(i)
+                return (
+                  <div class="flex items-center gap-3 min-w-0 flex-1 w-full group/item">
+                    <div class="flex flex-col h-full items-start w-5">
+                      <ServerHealthIndicator health={store.status[key]} />
+                    </div>
+                    <ServerRow
+                      conn={i}
+                      dimmed={store.status[key]?.healthy === false}
+                      status={store.status[key]}
+                      class="flex items-center gap-3 min-w-0 flex-1"
+                      badge={
+                        <Show when={defaultKey() === ServerConnection.key(i)}>
+                          <span class="text-text-base bg-surface-base text-14-regular px-1.5 rounded-xs">
+                            {language.t("dialog.server.status.default")}
+                          </span>
+                        </Show>
+                      }
+                      showCredentials
+                    />
+                    <div class="flex items-center justify-center gap-4 pl-4">
+                      <Show when={ServerConnection.key(current()) === key}>
+                        <Icon name="check" class="h-6" />
+                      </Show>
+
+                      <Show when={i.type === "http"}>
+                        <DropdownMenu>
+                          <DropdownMenu.Trigger
+                            as={IconButton}
+                            icon="dot-grid"
+                            variant="ghost"
+                            class="shrink-0 size-8 hover:bg-surface-base-hover data-[expanded]:bg-surface-base-active"
+                            onClick={(e: MouseEvent) => e.stopPropagation()}
+                            onPointerDown={(e: PointerEvent) => e.stopPropagation()}
+                          />
+                          <DropdownMenu.Portal>
+                            <DropdownMenu.Content class="mt-1">
+                              <DropdownMenu.Item
+                                onSelect={() => {
+                                  if (i.type !== "http") return
+                                  startEdit(i)
+                                }}
+                              >
+                                <DropdownMenu.ItemLabel>{language.t("dialog.server.menu.edit")}</DropdownMenu.ItemLabel>
+                              </DropdownMenu.Item>
+                              <Show when={canDefault() && defaultKey() !== key}>
+                                <DropdownMenu.Item onSelect={() => setDefault(key)}>
+                                  <DropdownMenu.ItemLabel>
+                                    {language.t("dialog.server.menu.default")}
+                                  </DropdownMenu.ItemLabel>
+                                </DropdownMenu.Item>
+                              </Show>
+                              <Show when={canDefault() && defaultKey() === key}>
+                                <DropdownMenu.Item onSelect={() => setDefault(null)}>
+                                  <DropdownMenu.ItemLabel>
+                                    {language.t("dialog.server.menu.defaultRemove")}
+                                  </DropdownMenu.ItemLabel>
+                                </DropdownMenu.Item>
+                              </Show>
+                              <DropdownMenu.Separator />
+                              <DropdownMenu.Item
+                                onSelect={() => handleRemove(ServerConnection.key(i))}
+                                class="text-text-on-critical-base hover:bg-surface-critical-weak"
+                              >
                                 <DropdownMenu.ItemLabel>
-                                  {language.t("dialog.server.menu.default")}
+                                  {language.t("dialog.server.menu.delete")}
                                 </DropdownMenu.ItemLabel>
                               </DropdownMenu.Item>
-                            </Show>
-                            <Show when={canDefault() && defaultKey() === key}>
-                              <DropdownMenu.Item onSelect={() => setDefault(null)}>
-                                <DropdownMenu.ItemLabel>
-                                  {language.t("dialog.server.menu.defaultRemove")}
-                                </DropdownMenu.ItemLabel>
-                              </DropdownMenu.Item>
-                            </Show>
-                            <DropdownMenu.Separator />
-                            <DropdownMenu.Item
-                              onSelect={() => handleRemove(ServerConnection.key(i))}
-                              class="text-text-on-critical-base hover:bg-surface-critical-weak"
-                            >
-                              <DropdownMenu.ItemLabel>{language.t("dialog.server.menu.delete")}</DropdownMenu.ItemLabel>
-                            </DropdownMenu.Item>
-                          </DropdownMenu.Content>
-                        </DropdownMenu.Portal>
-                      </DropdownMenu>
-                    </Show>
+                            </DropdownMenu.Content>
+                          </DropdownMenu.Portal>
+                        </DropdownMenu>
+                      </Show>
+                    </div>
                   </div>
-                </div>
-              )
-            }}
-          </List>
+                )
+              }}
+            </List>
+          </div>
         </Show>
 
         <div class="px-5 pb-5">
           <Show
-            when={isFormMode()}
+            when={!isLocalMode() && isFormMode()}
             fallback={
-              <Button
-                variant="secondary"
-                icon="plus-small"
-                size="large"
-                onClick={startAdd}
-                class="py-1.5 pl-1.5 pr-3 flex items-center gap-1.5"
-              >
-                {language.t("dialog.server.add.button")}
-              </Button>
+              <Show when={!isLocalMode()}>
+                <Button
+                  variant="secondary"
+                  icon="plus-small"
+                  size="large"
+                  onClick={startAdd}
+                  class="py-1.5 pl-1.5 pr-3 flex items-center gap-1.5"
+                >
+                  {language.t("dialog.server.add.button")}
+                </Button>
+              </Show>
             }
           >
             <Button variant="primary" size="large" onClick={submitForm} disabled={formBusy()} class="px-3 py-1.5">
