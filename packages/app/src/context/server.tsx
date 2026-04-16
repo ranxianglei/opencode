@@ -23,7 +23,7 @@ export function serverName(conn?: ServerConnection.Any, ignoreDisplayName = fals
 
 function projectsKey(key: ServerConnection.Key) {
   if (!key) return ""
-  if (key === "sidecar") return "local"
+  if (key === "sidecar" || key === "local:windows") return "local"
   if (isLocalHost(key)) return "local"
   return key
 }
@@ -81,7 +81,7 @@ export namespace ServerConnection {
         return Key.make(conn.http.url)
       case "sidecar": {
         if (conn.variant === "wsl") return Key.make(`wsl:${conn.distro}`)
-        return Key.make("sidecar")
+        return Key.make("local:windows")
       }
       case "ssh":
         return Key.make(`ssh:${conn.host}`)

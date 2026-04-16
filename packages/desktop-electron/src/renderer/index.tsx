@@ -319,7 +319,7 @@ render(() => {
           {(_) => {
             return (
               <AppInterface
-                defaultServer={defaultServer.latest ?? ServerConnection.Key.make("sidecar")}
+                defaultServer={defaultServer.latest ?? ServerConnection.Key.make("local:windows")}
                 servers={servers()}
                 router={MemoryRouter}
               >
