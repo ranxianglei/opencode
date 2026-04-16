@@ -19,7 +19,7 @@ import {
   probeWslDistro,
   probeWslRuntime,
   readWslCommandVersion,
-  resolveWslCommand,
+  resolveWslOpencode,
   upgradeWslOpencode,
   wslNeedsRestart,
 } from "./wsl"
@@ -175,7 +175,7 @@ export function createLocalServerController(appVersion: string) {
             return
           }
 
-          const resolvedPath = await resolveWslCommand("opencode", state.config.distro, {
+          const resolvedPath = await resolveWslOpencode(state.config.distro, {
             signal: abort.signal,
             onLine: (line) => appendTranscript(line),
           })
@@ -188,7 +188,7 @@ export function createLocalServerController(appVersion: string) {
             : null
           if (jobAbort !== abort) return
 
-          const opencode = opencodeCheck(resolvedPath, version, appVersion)
+          const opencode = opencodeCheck(resolvedPath, version, appVersion, state.config.distro)
           update({
             ...state,
             job: null,
@@ -444,30 +444,38 @@ export function createLocalServerController(appVersion: string) {
       })
 
       try {
-        const resolvedPath = await resolveWslCommand("opencode", state.config.distro, {
+        const resolvedPath = await resolveWslOpencode(state.config.distro, {
           signal: abort.signal,
           onLine: (line) => appendTranscript(line),
         })
         if (jobAbort !== abort) return
+        const currentVersion = resolvedPath
+          ? await readWslCommandVersion(resolvedPath, state.config.distro, {
+              signal: abort.signal,
+              onLine: (line) => appendTranscript(line),
+            })
+          : null
+        if (jobAbort !== abort) return
 
-        const result = resolvedPath
-          ? await upgradeWslOpencode(appVersion, state.config.distro, {
-              signal: abort.signal,
-              onLine: (line) => appendTranscript(line),
-            })
-          : await installWslOpencode(appVersion, state.config.distro, {
-              signal: abort.signal,
-              onLine: (line) => appendTranscript(line),
-            })
+        const result =
+          resolvedPath && currentVersion
+            ? await upgradeWslOpencode(appVersion, resolvedPath, state.config.distro, {
+                signal: abort.signal,
+                onLine: (line) => appendTranscript(line),
+              })
+            : await installWslOpencode(appVersion, state.config.distro, {
+                signal: abort.signal,
+                onLine: (line) => appendTranscript(line),
+              })
         if (jobAbort !== abort) return
         if (result.code !== 0) throw new Error(commandFailure(result, "OpenCode installation failed"))
 
-        const nextPath = await resolveWslCommand("opencode", state.config.distro, {
+        const nextPath = await resolveWslOpencode(state.config.distro, {
           signal: abort.signal,
           onLine: (line) => appendTranscript(line),
         })
         if (jobAbort !== abort) return
-        const version = nextPath
+        const nextVersion = nextPath
           ? await readWslCommandVersion(nextPath, state.config.distro, {
               signal: abort.signal,
               onLine: (line) => appendTranscript(line),
@@ -475,7 +483,7 @@ export function createLocalServerController(appVersion: string) {
           : null
         if (jobAbort !== abort) return
 
-        const opencode = opencodeCheck(nextPath, version, appVersion)
+        const opencode = opencodeCheck(nextPath, nextVersion, appVersion, state.config.distro)
         update({
           ...state,
           job: null,
@@ -637,9 +645,11 @@ function opencodeCheck(
   resolvedPath: string | null,
   version: string | null,
   expectedVersion: string,
+  distro: string | null,
 ): LocalServerOpencodeCheck {
   if (!resolvedPath) {
     return {
+      distro,
       resolvedPath: null,
       version: null,
       expectedVersion,
@@ -647,7 +657,18 @@ function opencodeCheck(
       error: "opencode is not installed in the selected distro",
     }
   }
+  if (!version) {
+    return {
+      distro,
+      resolvedPath,
+      version: null,
+      expectedVersion,
+      matchesDesktop: null,
+      error: "opencode is installed but could not run in the selected distro",
+    }
+  }
   return {
+    distro,
     resolvedPath,
     version,
     expectedVersion,

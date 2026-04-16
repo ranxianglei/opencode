@@ -47,6 +47,7 @@ export type LocalServerDistroCheck = {
   error: string | null
 }
 export type LocalServerOpencodeCheck = {
+  distro: string | null
   resolvedPath: string | null
   version: string | null
   expectedVersion: string | null

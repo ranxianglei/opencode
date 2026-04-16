@@ -52,6 +52,8 @@ function runCommand(command: string, args: string[], opts: RunWslOptions = {}) {
     let stderr = ""
     let stdoutPending = ""
     let stderrPending = ""
+    const stdoutDecoder = createOutputDecoder()
+    const stderrDecoder = createOutputDecoder()
 
     const flush = (stream: WslCommandLine["stream"], pending: string) => {
       if (!pending) return ""
@@ -59,27 +61,36 @@ function runCommand(command: string, args: string[], opts: RunWslOptions = {}) {
       return ""
     }
 
-    child.stdout.setEncoding("utf8")
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk
-      stdoutPending += chunk
-      const lines = stdoutPending.split(/\r?\n/g)
-      stdoutPending = lines.pop() ?? ""
-      for (const line of lines) opts.onLine?.({ stream: "stdout", text: line })
-    })
-    child.stdout.on("end", () => {
-      stdoutPending = flush("stdout", stdoutPending)
-    })
-
-    child.stderr.setEncoding("utf8")
-    child.stderr.on("data", (chunk: string) => {
+    const append = (stream: WslCommandLine["stream"], chunk: string) => {
+      if (!chunk) return
+      if (stream === "stdout") {
+        stdout += chunk
+        stdoutPending += chunk
+        const lines = stdoutPending.split(/\r?\n/g)
+        stdoutPending = lines.pop() ?? ""
+        for (const line of lines) opts.onLine?.({ stream: "stdout", text: line })
+        return
+      }
       stderr += chunk
       stderrPending += chunk
       const lines = stderrPending.split(/\r?\n/g)
       stderrPending = lines.pop() ?? ""
       for (const line of lines) opts.onLine?.({ stream: "stderr", text: line })
+    }
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      append("stdout", stdoutDecoder.decode(chunk))
+    })
+    child.stdout.on("end", () => {
+      append("stdout", stdoutDecoder.flush())
+      stdoutPending = flush("stdout", stdoutPending)
+    })
+
+    child.stderr.on("data", (chunk: Buffer) => {
+      append("stderr", stderrDecoder.decode(chunk))
     })
     child.stderr.on("end", () => {
+      append("stderr", stderrDecoder.flush())
       stderrPending = flush("stderr", stderrPending)
     })
 
@@ -88,6 +99,28 @@ function runCommand(command: string, args: string[], opts: RunWslOptions = {}) {
       resolve({ code, signal, stdout, stderr })
     })
   })
+}
+
+function createOutputDecoder() {
+  let decoder: TextDecoder | undefined
+  return {
+    decode(chunk: Buffer) {
+      decoder ??= new TextDecoder(detectOutputEncoding(chunk))
+      return decoder.decode(chunk, { stream: true })
+    },
+    flush() {
+      return decoder?.decode() ?? ""
+    },
+  }
+}
+
+function detectOutputEncoding(chunk: Uint8Array) {
+  if (chunk[0] === 0xff && chunk[1] === 0xfe) return "utf-16le"
+  const pairs = Math.floor(chunk.length / 2)
+  if (pairs < 2) return "utf-8"
+  const oddZeroes = Array.from({ length: pairs }).filter((_, index) => chunk[index * 2 + 1] === 0).length
+  const evenZeroes = Array.from({ length: pairs }).filter((_, index) => chunk[index * 2] === 0).length
+  return oddZeroes >= Math.ceil(pairs / 3) && evenZeroes * 2 <= oddZeroes ? "utf-16le" : "utf-8"
 }
 
 export function runWslInDistro(args: string[], distro?: string | null, opts?: RunWslOptions) {
@@ -210,9 +243,25 @@ export async function probeWslDistro(name: string, opts?: RunWslOptions): Promis
   }
 }
 
-export async function resolveWslCommand(command: string, distro: string, opts?: RunWslOptions) {
-  const result = await runWslSh(`command -v ${shellEscape(command)} 2>/dev/null || true`, distro, opts)
-  return summarize(result.stdout) || null
+export async function resolveWslOpencode(distro: string, opts?: RunWslOptions) {
+  const result = await runWslBash(
+    [
+      'path="$(command -v opencode 2>/dev/null || true)"',
+      'for candidate in "$path" "${XDG_BIN_DIR:-$HOME/.local/bin}/opencode" "$HOME/bin/opencode" "$HOME/.opencode/bin/opencode" "/usr/local/bin/opencode"; do',
+      '  [ -n "$candidate" ] || continue',
+      '  case "$candidate" in',
+      "    /mnt/*) continue ;;",
+      "  esac",
+      '  if [ -x "$candidate" ]; then',
+      '    printf "%s\\n" "$candidate"',
+      "    exit 0",
+      "  fi",
+      "done",
+    ].join("\n"),
+    distro,
+    opts,
+  )
+  return firstLine(result.stdout)
 }
 
 export async function readWslCommandVersion(command: string, distro: string, opts?: RunWslOptions) {
@@ -220,8 +269,8 @@ export async function readWslCommandVersion(command: string, distro: string, opt
   return firstLine(result.stdout)
 }
 
-export async function upgradeWslOpencode(target: string, distro: string, opts?: RunWslOptions) {
-  return runWslBash(`opencode upgrade ${shellEscape(target)}`, distro, opts)
+export async function upgradeWslOpencode(target: string, command: string, distro: string, opts?: RunWslOptions) {
+  return runWslBash(`${shellEscape(command)} upgrade ${shellEscape(target)}`, distro, opts)
 }
 
 export function openWslTerminal(distro?: string | null) {
