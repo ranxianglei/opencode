@@ -362,7 +362,7 @@ export const SortableWorkspace = (props: {
       InlineEditor={props.ctx.InlineEditor}
       renameWorkspace={props.ctx.renameWorkspace}
       setEditor={props.ctx.setEditor}
-      projectId={props.project.id}
+      projectId={props.project?.id ?? ""}
     />
   )
 
@@ -465,19 +465,33 @@ export const LocalWorkspace = (props: {
 }): JSX.Element => {
   const globalSync = useGlobalSync()
   const language = useLanguage()
+  // Same guard pattern as SortableWorkspace: the parent passes
+  // `project={project()!}` but `project()` can transiently flip to
+  // undefined during a server-switch cascade before this component
+  // unmounts, so every reactive memo reading props.project has to
+  // tolerate undefined.
+  const worktree = createMemo(() => props.project?.worktree ?? "")
   const workspace = createMemo(() => {
-    const [store, setStore] = globalSync.child(props.project.worktree)
+    const dir = worktree()
+    if (!dir) return undefined
+    const [store, setStore] = globalSync.child(dir)
     return { store, setStore }
   })
-  const slug = createMemo(() => base64Encode(props.project.worktree))
-  const sessions = createMemo(() => sortedRootSessions(workspace().store, props.sortNow()))
+  const slug = createMemo(() => (worktree() ? base64Encode(worktree()) : ""))
+  const sessions = createMemo(() => {
+    const store = workspace()?.store
+    return store ? sortedRootSessions(store, props.sortNow()) : []
+  })
+  const booted = createMemo((prev) => prev || workspace()?.store.status === "complete", false)
   const count = createMemo(() => sessions()?.length ?? 0)
-  const query = useQuery(() => ({ ...loadSessionsQuery(props.project.worktree) }))
-  const hasMore = createMemo(() => workspace().store.sessionTotal > count())
-  const loading = () => query.isLoading && count() === 0
+  const query = useQuery(() => ({ ...loadSessionsQuery(worktree()) }))
+  const loading = createMemo(() => query.isPending && count() === 0)
+  const hasMore = createMemo(() => (workspace()?.store.sessionTotal ?? 0) > count())
   const loadMore = async () => {
-    workspace().setStore("limit", (limit) => (limit ?? 0) + 5)
-    await globalSync.project.loadSessions(props.project.worktree)
+    const dir = worktree()
+    if (!dir) return
+    workspace()?.setStore("limit", (limit) => (limit ?? 0) + 5)
+    await globalSync.project.loadSessions(dir)
   }
 
   return (
