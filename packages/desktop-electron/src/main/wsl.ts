@@ -16,7 +16,18 @@ export type WslCommandResult = {
 type RunWslOptions = {
   onLine?: (line: WslCommandLine) => void
   signal?: AbortSignal
+  /**
+   * Ceiling on how long we wait for the child process to exit. When the
+   * LXSS service or a specific distro wedges (e.g. Ubuntu-24.04 with a
+   * pending first-run prompt), `wsl.exe` never returns and any command
+   * that doesn't specify a timeout hangs the entire startup flow. Default
+   * is 20s — enough for slow cold-starts, short enough to fail fast on
+   * a wedge. Callers can override for longer-running jobs.
+   */
+  timeoutMs?: number
 }
+
+const DEFAULT_WSL_TIMEOUT_MS = 20_000
 
 // `--user root` bypasses the distro's default-user requirement. A freshly
 // installed WSL distro (Ubuntu-24.04 in particular) prompts interactively
@@ -50,6 +61,20 @@ function runCommand(command: string, args: string[], opts: RunWslOptions = {}) {
       windowsHide: true,
       signal: opts.signal,
     })
+
+    // Guard every wsl.exe invocation with a timeout. When the distro or
+    // the LXSS service is wedged (Ubuntu first-run state, Windows update
+    // pending, etc.) wsl.exe produces no output and never exits; without
+    // this the whole sidecar spawn flow stalls the app forever.
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_WSL_TIMEOUT_MS
+    const timeoutId = setTimeout(() => {
+      try {
+        child.kill()
+      } catch {
+        /* ignore */
+      }
+      reject(new Error(`${command} ${args.join(" ")} timed out after ${timeoutMs}ms`))
+    }, timeoutMs)
 
     let stdout = ""
     let stderr = ""
@@ -97,8 +122,12 @@ function runCommand(command: string, args: string[], opts: RunWslOptions = {}) {
       stderrPending = flush("stderr", stderrPending)
     })
 
-    child.once("error", reject)
+    child.once("error", (error) => {
+      clearTimeout(timeoutId)
+      reject(error)
+    })
     child.once("close", (code, signal) => {
+      clearTimeout(timeoutId)
       resolve({ code, signal, stdout, stderr })
     })
   })
