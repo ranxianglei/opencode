@@ -6,6 +6,13 @@
 // it so stacks contain the origin frame.
 Error.stackTraceLimit = 200
 
+// Install the solid-js owner/cleanup instrumentation before anything else
+// touches solid-js so every created owner gets accessor-based traps on its
+// `owned` and `cleanups`. This logs the exact cleanup-cascade that nulls an
+// owner's `owned` mid-iteration — the root cause of the recursive cleanNode
+// crash. Debug-only; remove once the offending cleanup is identified.
+import "./solid-instrument"
+
 // Install global error listeners before any other module runs so that
 // uncaught errors and rejected promises reach the main process with their
 // full stacks intact. Electron's `console-message` event only forwards the
