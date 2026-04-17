@@ -5,7 +5,7 @@ import { app } from "electron"
 import { DEFAULT_SERVER_URL_KEY } from "./constants"
 import { getUserShell, loadShellEnv } from "./shell-env"
 import { getStore } from "./store"
-import { checkWslDistroFirstRun, type WslCommandLine, resolveWslOpencode, wslArgs } from "./wsl"
+import { type WslCommandLine, resolveWslOpencode, wslArgs } from "./wsl"
 
 export type HealthCheck = { wait: Promise<void> }
 
@@ -83,23 +83,15 @@ export async function spawnWslSidecar(
   distro: string,
   opts: { onLine?: (line: WslCommandLine) => void; healthTimeoutMs?: number } = {},
 ): Promise<WslSidecar> {
-  // Gate on the registry state BEFORE any wsl.exe invocation. If the
-  // distro still has DefaultUid=0 it means the interactive first-run
-  // "Create a default UNIX user account" prompt never completed, and
-  // every wsl.exe -d <distro> ... call will silently block on stdin
-  // forever (we verified: Ubuntu-24.04 hangs on both -- echo and
-  // --user root -- echo in this state). Fail fast with a clear message
-  // so the controller can surface it to the user.
-  const firstRun = await checkWslDistroFirstRun(distro)
-  if (firstRun.status === "not-installed") {
-    throw new Error(`WSL distro ${distro} is not installed`)
-  }
-  if (firstRun.status === "needs-first-run") {
-    throw new Error(
-      `WSL distro ${distro} has not completed first-run setup. Open a terminal and run 'wsl -d ${distro}' to create a default UNIX user, then retry.`,
-    )
-  }
-
+  // Every wsl.exe invocation below goes through wslArgs which injects
+  // `--user root`. That matters even when a distro has DefaultUid=0
+  // (i.e. the interactive first-run user account setup never ran):
+  // explicit --user root bypasses the OOBE hook that would otherwise
+  // prompt on stdin, so we can resolve opencode and spawn the sidecar
+  // without any machine-wide first-run handshake. The earlier Ubuntu
+  // hang was caused by invoking without --user (default uid 0 triggers
+  // OOBE), not by the registry state itself. We still have a 20s
+  // timeout in runCommand as a safety net for true wsl.exe wedges.
   const opencode = await resolveWslOpencode(distro)
   if (!opencode) throw new Error(`OpenCode is not installed in ${distro}`)
 
