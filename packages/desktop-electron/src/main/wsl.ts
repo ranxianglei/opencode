@@ -1,10 +1,5 @@
 import { spawn } from "node:child_process"
-import type {
-  LocalServerDistroProbe,
-  LocalServerInstalledDistro,
-  LocalServerOnlineDistro,
-  LocalServerWslCheck,
-} from "../preload/types"
+import type { WslDistroProbe, WslInstalledDistro, WslOnlineDistro, WslRuntimeCheck } from "../preload/types"
 
 export type WslCommandLine = {
   stream: "stdout" | "stderr"
@@ -135,7 +130,7 @@ export function runWslBash(script: string, distro?: string | null, opts?: RunWsl
   return runWslInDistro(["bash", "-lc", script], distro, opts)
 }
 
-export async function probeWslRuntime(opts?: RunWslOptions): Promise<LocalServerWslCheck> {
+export async function probeWslRuntime(opts?: RunWslOptions): Promise<WslRuntimeCheck> {
   const version = await runWsl(["--version"], opts).catch((error) => ({
     code: 1,
     signal: null,
@@ -206,7 +201,7 @@ export function wslNeedsRestart(result: WslCommandResult) {
   return /restart|reboot/i.test(`${result.stdout}\n${result.stderr}`)
 }
 
-export async function probeWslDistro(name: string, opts?: RunWslOptions): Promise<LocalServerDistroProbe> {
+export async function probeWslDistro(name: string, opts?: RunWslOptions): Promise<WslDistroProbe> {
   const executable = await runWslInDistro(["/bin/true"], name, opts).catch((error) => ({
     code: 1,
     signal: null,
@@ -298,7 +293,7 @@ function parseInstalledDistros(output: string) {
         state: state || null,
         version: Number.isNaN(Number.parseInt(version, 10)) ? null : Number.parseInt(version, 10),
         isDefault: marker === "*",
-      } satisfies LocalServerInstalledDistro,
+      } satisfies WslInstalledDistro,
     ]
   })
 }
@@ -311,7 +306,7 @@ function parseOnlineDistros(output: string) {
     if (!match) return []
     const [, name, label] = match
     if (/^name$/i.test(name)) return []
-    return [{ name, label: label.trim() } satisfies LocalServerOnlineDistro]
+    return [{ name, label: label.trim() } satisfies WslOnlineDistro]
   })
 }
 

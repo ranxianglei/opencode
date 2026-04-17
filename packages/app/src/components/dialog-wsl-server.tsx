@@ -1,29 +1,37 @@
 import { Button } from "@opencode-ai/ui/button"
+import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Spinner } from "@opencode-ai/ui/spinner"
 import { showToast } from "@opencode-ai/ui/toast"
 import { createEffect, createMemo, For, Match, on, onCleanup, Show, Switch } from "solid-js"
-import { createStore, reconcile, unwrap } from "solid-js/store"
+import { createStore, reconcile } from "solid-js/store"
 import { useLanguage } from "@/context/language"
-import type { LocalServerConfig, LocalServerMode, LocalServerState, LocalServerStep } from "@/context/platform"
+import type { WslServerStep, WslServersState } from "@/context/platform"
 import { usePlatform } from "@/context/platform"
 
-const WSL_STEPS: LocalServerStep[] = ["wsl", "distro", "opencode", "switch"]
+const STEPS: WslServerStep[] = ["wsl", "distro", "opencode"]
 
-export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
+interface DialogWslServerProps {
+  onAdded?: () => void
+}
+
+export function DialogWslServer(props: DialogWslServerProps = {}) {
   const language = useLanguage()
   const platform = usePlatform()
+  const dialog = useDialog()
   const [store, setStore] = createStore({
-    state: undefined as LocalServerState | undefined,
+    state: undefined as WslServersState | undefined,
     loading: true,
-    step: undefined as LocalServerStep | undefined,
+    step: undefined as WslServerStep | undefined,
+    selectedDistro: null as string | null,
     installTarget: undefined as string | undefined,
+    adding: false,
   })
 
   createEffect(() => {
-    const localServer = platform.localServer
-    if (!localServer) return
+    const wslServers = platform.wslServers
+    if (!wslServers) return
     let mounted = true
-    void localServer
+    void wslServers
       .getState()
       .then((state) => {
         if (!mounted) return
@@ -34,7 +42,7 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
         requestError(language, err)
         setStore("loading", false)
       })
-    const off = localServer.subscribe((event) => {
+    const off = wslServers.subscribe((event) => {
       setStore("state", reconcile(event.state))
       setStore("loading", false)
     })
@@ -45,25 +53,24 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
   })
 
   const current = () => store.state
-  const localServer = () => platform.localServer
-  const targetMode = createMemo<"windows" | "wsl">(
-    () => props.targetMode ?? (current()?.config.mode === "wsl" ? "wsl" : "wsl"),
-  )
-  const configuredDistro = createMemo(() => current()?.config.distro ?? null)
-  const busy = createMemo(() => !!current()?.job)
+  const wslServers = () => platform.wslServers
+  const busy = createMemo(() => !!current()?.job || store.adding)
+  const selectedDistro = () => store.selectedDistro
   const selectedProbe = createMemo(() => {
-    const probe = current()?.checks.distro?.selected
-    return probe?.name === configuredDistro() ? probe : null
+    const distro = selectedDistro()
+    if (!distro) return null
+    return current()?.distroProbes[distro] ?? null
   })
-  const selectedInstalled = createMemo(() =>
-    (current()?.checks.distro?.installed ?? []).find((item) => item.name === current()?.config.distro),
-  )
-  const defaultInstalledDistro = createMemo(
-    () => (current()?.checks.distro?.installed ?? []).find((item) => item.isDefault) ?? null,
-  )
+  const selectedInstalled = createMemo(() => {
+    const distro = selectedDistro()
+    if (!distro) return null
+    return (current()?.installed ?? []).find((item) => item.name === distro) ?? null
+  })
+  const defaultInstalledDistro = createMemo(() => (current()?.installed ?? []).find((item) => item.isDefault) ?? null)
   const opencodeCheck = createMemo(() => {
-    const check = current()?.checks.opencode
-    return check?.distro === configuredDistro() ? check : null
+    const distro = selectedDistro()
+    if (!distro) return null
+    return current()?.opencodeChecks[distro] ?? null
   })
   const distroWarningProbe = createMemo(() => {
     const probe = selectedProbe()
@@ -73,7 +80,7 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
   })
   const distroUnavailableMessage = createMemo(() => {
     const probe = distroWarningProbe()
-    const distro = configuredDistro()
+    const distro = selectedDistro()
     if (!probe || probe.canExecute || !distro) return null
     if (!selectedInstalled()) return `${distro} is not installed yet.`
     return `Open ${distro} once to finish setup.`
@@ -88,36 +95,23 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
     const check = opencodeCheck()
     return check?.matchesDesktop === false ? check : null
   })
+  const existingServerDistros = createMemo(() => new Set((current()?.servers ?? []).map((item) => item.config.distro)))
+  const addableInstalledDistros = createMemo(() => {
+    return (current()?.installed ?? []).filter((item) => !existingServerDistros().has(item.name))
+  })
   const installableDistros = createMemo(() => {
-    const online = current()?.checks.distro?.online ?? []
-    const installed = new Set((current()?.checks.distro?.installed ?? []).map((item) => item.name))
+    const online = current()?.online ?? []
+    const installed = new Set((current()?.installed ?? []).map((item) => item.name))
     const hasVersionedUbuntu = online.some((item) => /^Ubuntu-\d/.test(item.name))
     return online
       .filter((item) => !installed.has(item.name))
       .filter((item) => !(item.name === "Ubuntu" && hasVersionedUbuntu))
   })
   const installTarget = createMemo(() => installableDistros().find((item) => item.name === store.installTarget) ?? null)
-  const configuredRuntime = createMemo(() => {
-    const state = current()
-    if (!state) return { mode: "windows" as const, distro: null as string | null }
-    if (state.config.mode === "wsl" && state.config.distro) {
-      return { mode: "wsl" as const, distro: state.config.distro }
-    }
-    return { mode: "windows" as const, distro: null as string | null }
-  })
-  const configuredRuntimeLabel = createMemo(() => runtimeLabel(configuredRuntime().mode, configuredRuntime().distro))
-  const currentRuntimeLabel = createMemo(() =>
-    runtimeLabel(current()?.runtime.mode ?? "windows", current()?.runtime.distro ?? null),
-  )
-  const needsRestart = createMemo(() => {
-    const state = current()
-    if (!state) return false
-    return state.runtime.mode !== configuredRuntime().mode || state.runtime.distro !== configuredRuntime().distro
-  })
-  const wslReady = createMemo(() => !!current()?.checks.wsl?.available && !current()?.config.onboarding.pendingRestart)
+  const wslReady = createMemo(() => !!current()?.runtime?.available && !current()?.pendingRestart)
   const distroReady = createMemo(() => {
     const probe = selectedProbe()
-    if (!probe || !current()?.config.distro) return false
+    if (!probe || !selectedDistro()) return false
     if (selectedInstalled()?.version === 1) return false
     return probe.canExecute && probe.hasBash && probe.hasCurl
   })
@@ -125,15 +119,13 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
     const check = opencodeCheck()
     return !!check?.resolvedPath && !check.error
   })
-  const switchReady = createMemo(() => wslReady() && distroReady() && opencodeReady())
-  const recommendedStep = createMemo<LocalServerStep>(() => {
-    if (targetMode() === "windows") return "switch"
+  const allReady = createMemo(() => wslReady() && distroReady() && opencodeReady())
+  const recommendedStep = createMemo<WslServerStep>(() => {
     if (!wslReady()) return "wsl"
     if (!distroReady()) return "distro"
-    if (!opencodeReady()) return "opencode"
-    return "switch"
+    return "opencode"
   })
-  const activeStep = createMemo(() => current()?.job?.step ?? store.step ?? recommendedStep())
+  const activeStep = createMemo(() => store.step ?? recommendedStep())
 
   createEffect(
     on(recommendedStep, (next) => {
@@ -143,17 +135,20 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
 
   const autoProbe = createMemo(() => {
     const state = current()
-    if (!state || !localServer() || busy() || targetMode() === "windows") return null
-    if (state.config.onboarding.pendingRestart) return null
-    if (!state.checks.wsl) return { key: "wsl", step: "wsl" as const }
+    if (!state || !wslServers() || busy()) return null
+    if (state.pendingRestart) return null
+    if (!state.runtime) return { key: "runtime", run: () => wslServers()!.probeRuntime() }
     if (!wslReady()) return null
-    if (!state.checks.distro) return { key: "distro:list", step: "distro" as const }
-    if (state.config.distro && !selectedProbe()) {
-      return { key: `distro:${state.config.distro}`, step: "distro" as const }
+    if (!state.installed.length && !state.online.length) {
+      return { key: "distros", run: () => wslServers()!.refreshDistros() }
     }
-    if (!state.config.distro || !distroReady()) return null
-    if (!opencodeCheck()) {
-      return { key: `opencode:${state.config.distro}`, step: "opencode" as const }
+    const distro = selectedDistro()
+    if (distro && !state.distroProbes[distro]) {
+      return { key: `probe-distro:${distro}`, run: () => wslServers()!.probeDistro(distro) }
+    }
+    if (!distro || !distroReady()) return null
+    if (!state.opencodeChecks[distro]) {
+      return { key: `probe-opencode:${distro}`, run: () => wslServers()!.probeOpencode(distro) }
     }
     return null
   })
@@ -163,15 +158,16 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
     const probe = autoProbe()
     if (!probe || probe.key === lastAutoProbe) return
     lastAutoProbe = probe.key
-    void run(() => localServer()!.runStep(probe.step))
+    void run(probe.run)
   })
 
   createEffect(() => {
     const state = current()
     const distro = defaultInstalledDistro()
-    if (!state || !distro || !localServer() || busy() || targetMode() !== "wsl") return
-    if (state.config.distro) return
-    void selectDistro(distro.name)
+    if (!state || !distro || busy()) return
+    if (selectedDistro()) return
+    if (existingServerDistros().has(distro.name)) return
+    setStore("selectedDistro", distro.name)
   })
 
   createEffect(() => {
@@ -186,43 +182,43 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
 
   const wslMessage = createMemo(() => {
     const state = current()
-    if (!state || state.job?.step === "wsl") return "Checking WSL..."
-    if (state.config.onboarding.pendingRestart) return "Windows needs a restart to finish installing WSL."
-    if (state.checks.wsl?.available) return state.checks.wsl.version ?? "WSL is ready."
-    return state.checks.wsl?.error ?? "WSL is required to continue."
+    if (!state || state.job?.kind === "runtime") return "Checking WSL..."
+    if (state.pendingRestart) return "Windows needs a restart to finish installing WSL."
+    if (state.runtime?.available) return state.runtime.version ?? "WSL is ready."
+    return state.runtime?.error ?? "WSL is required to continue."
   })
 
   const distroMessage = createMemo(() => {
     const state = current()
     if (!state) return "Checking distros..."
-    if (state.job?.step === "distro") {
-      if (state.config.distro && !selectedInstalled()) return `Installing ${state.config.distro}...`
-      return state.config.distro ? `Checking ${state.config.distro}...` : "Checking distros..."
-    }
+    const distro = selectedDistro()
+    if (state.job?.kind === "install-distro") return `Installing ${state.job.distro}...`
+    if (state.job?.kind === "probe-distro") return `Checking ${state.job.distro}...`
+    if (state.job?.kind === "distros") return "Listing distros..."
     if (distroUnavailableMessage()) return distroUnavailableMessage()!
-    if (state.checks.distro?.error && !selectedProbe()) return state.checks.distro.error
     if (selectedProbe() && distroReady()) return `${selectedProbe()!.name} is ready.`
-    if (state.config.distro) return `Finishing setup for ${state.config.distro}.`
+    if (distro) return `Finishing setup for ${distro}.`
     return "Pick a distro or install one below."
   })
 
   const opencodeMessage = createMemo(() => {
     const state = current()
     if (!state) return "Checking OpenCode..."
-    if (state.job?.step === "opencode") {
-      return state.config.distro ? `Checking OpenCode in ${state.config.distro}...` : "Checking OpenCode..."
+    const distro = selectedDistro()
+    if (state.job?.kind === "probe-opencode" || state.job?.kind === "install-opencode") {
+      return distro ? `Checking OpenCode in ${distro}...` : "Checking OpenCode..."
     }
     if (opencodeCheck()?.error) return opencodeCheck()!.error
     if (opencodeCheck()?.matchesDesktop === false) {
-      return state.config.distro ? `Update OpenCode in ${state.config.distro}.` : "Update OpenCode."
+      return distro ? `Update OpenCode in ${distro}.` : "Update OpenCode."
     }
-    if (opencodeReady())
-      return state.config.distro ? `OpenCode is ready in ${state.config.distro}.` : "OpenCode is ready."
-    return state.config.distro ? `Install OpenCode in ${state.config.distro}.` : "Choose a distro first."
+    if (opencodeReady()) return distro ? `OpenCode is ready in ${distro}.` : "OpenCode is ready."
+    return distro ? `Install OpenCode in ${distro}.` : "Choose a distro first."
   })
+
   const installProgress = createMemo(() => {
     const state = current()
-    if (!state?.job || state.status.kind !== "running") return null
+    if (!state?.job) return null
     const transcript = state.transcript.filter((line) => line.text.trim())
     const title = transcript[0]?.text
     if (!title?.startsWith("Installing ")) return null
@@ -240,48 +236,30 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
     }
   }
 
-  const plainConfig = (config: LocalServerConfig): LocalServerConfig => structuredClone(unwrap(config))
-
-  const selectDistro = async (name: string) => {
-    const state = current()
-    if (!state || !localServer()) return
-    const config = plainConfig(state.config)
+  const selectDistro = (name: string) => {
+    setStore("selectedDistro", name)
     setStore("step", "distro")
-    await run(() =>
-      localServer()!.setConfig({
-        ...config,
-        mode: "wsl",
-        distro: name,
-        onboarding: {
-          ...config.onboarding,
-          complete: false,
-          step: "distro",
-        },
-      }),
-    )
   }
 
-  const swapToWindows = async () => {
-    const state = current()
-    if (!state || !localServer()) return
-    const config = plainConfig(state.config)
-    await run(() =>
-      localServer()!.setConfig({
-        ...config,
-        mode: "windows",
-        distro: null,
-        onboarding: {
-          ...config.onboarding,
-          complete: true,
-          pendingRestart: false,
-          step: null,
-        },
-      }),
-    )
+  const finish = async () => {
+    const distro = selectedDistro()
+    if (!distro) return
+    const api = wslServers()
+    if (!api) return
+    setStore("adding", true)
+    try {
+      await api.addServer(distro)
+      props.onAdded?.()
+      dialog.close()
+    } catch (err) {
+      requestError(language, err)
+    } finally {
+      setStore("adding", false)
+    }
   }
 
   const steps = createMemo(() =>
-    WSL_STEPS.filter((step) => targetMode() === "wsl" || step === "switch").map((step) => ({
+    STEPS.map((step) => ({
       step,
       title: stepTitle(step),
       state: stepState(step, {
@@ -290,8 +268,6 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
         distroReady: distroReady(),
         opencodeReady: opencodeReady(),
         opencodeMismatch: opencodeCheck()?.matchesDesktop === false,
-        switchReady: switchReady(),
-        needsRestart: needsRestart(),
       }),
       locked: stepIndex(step) > stepIndex(recommendedStep()),
     })),
@@ -299,51 +275,46 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
 
   return (
     <div class="px-5 pb-5 flex flex-col gap-4">
-      <Show
-        when={!store.loading}
-        fallback={<div class="px-1 py-6 text-14-regular text-text-weak">Loading local server...</div>}
-      >
-        <Show when={targetMode() === "wsl"}>
-          <div class="flex gap-2 overflow-x-auto pb-1">
-            <For each={steps()}>
-              {(item) => (
-                <button
-                  type="button"
-                  class="min-w-[132px] rounded-md border px-3 py-2 text-left transition-colors"
-                  classList={{
-                    "border-border-strong-base bg-surface-base-hover": item.state === "current",
-                    "border-icon-success-base/40 bg-surface-base": item.state === "done",
-                    "border-border-weak-base bg-background-base opacity-60": item.state === "locked",
-                    "border-icon-warning-base/40 bg-surface-base": item.state === "warning",
-                  }}
-                  disabled={item.locked}
-                  onClick={() => setStore("step", item.step)}
-                >
-                  <div class="text-13-medium text-text-strong">{item.title}</div>
-                </button>
-              )}
-            </For>
-          </div>
-        </Show>
+      <Show when={!store.loading} fallback={<div class="px-1 py-6 text-14-regular text-text-weak">Loading...</div>}>
+        <div class="flex gap-2 overflow-x-auto pb-1">
+          <For each={steps()}>
+            {(item) => (
+              <button
+                type="button"
+                class="min-w-[132px] rounded-md border px-3 py-2 text-left transition-colors"
+                classList={{
+                  "border-border-strong-base bg-surface-base-hover": item.state === "current",
+                  "border-icon-success-base/40 bg-surface-base": item.state === "done",
+                  "border-border-weak-base bg-background-base opacity-60": item.state === "locked",
+                  "border-icon-warning-base/40 bg-surface-base": item.state === "warning",
+                }}
+                disabled={item.locked}
+                onClick={() => setStore("step", item.step)}
+              >
+                <div class="text-13-medium text-text-strong">{item.title}</div>
+              </button>
+            )}
+          </For>
+        </div>
 
         <Switch>
           <Match when={activeStep() === "wsl"}>
             <div class="rounded-md bg-surface-base p-4 flex flex-col gap-3">
               <div class="flex items-center justify-between gap-3">
                 <div class="text-14-medium text-text-strong">WSL</div>
-                <Show when={current()?.checks.wsl && !wslReady() && !current()?.config.onboarding.pendingRestart}>
+                <Show when={current()?.runtime && !wslReady() && !current()?.pendingRestart}>
                   <Button
                     variant="secondary"
                     size="large"
                     disabled={busy()}
-                    onClick={() => void run(() => localServer()!.installWsl())}
+                    onClick={() => void run(() => wslServers()!.installWsl())}
                   >
                     Install WSL
                   </Button>
                 </Show>
               </div>
               <div class="text-12-regular text-text-weak whitespace-pre-wrap break-words">{wslMessage()}</div>
-              <Show when={current()?.config.onboarding.pendingRestart}>
+              <Show when={current()?.pendingRestart}>
                 <div class="rounded-md border border-border-weak-base px-3 py-3 flex items-center justify-between gap-3">
                   <div class="text-12-regular text-text-warning-base">Windows restart required.</div>
                   <Button variant="secondary" size="large" onClick={() => void platform.restart()}>
@@ -361,20 +332,24 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
 
               <div class="flex flex-col gap-2">
                 <Show
-                  when={(current()?.checks.distro?.installed.length ?? 0) > 0}
+                  when={addableInstalledDistros().length > 0}
                   fallback={
                     <div class="text-12-regular text-text-weak">
-                      {current()?.checks.distro ? "No distros detected yet." : "Checking distros..."}
+                      {current()?.installed.length
+                        ? "All installed distros are already added."
+                        : current()?.runtime?.available
+                          ? "No distros detected yet."
+                          : "Checking distros..."}
                     </div>
                   }
                 >
-                  <For each={current()?.checks.distro?.installed ?? []}>
+                  <For each={addableInstalledDistros()}>
                     {(item) => (
                       <button
                         type="button"
                         class="rounded-md border border-border-weak-base px-3 py-2 text-left transition-colors"
-                        classList={{ "bg-surface-raised-base": current()?.config.distro === item.name }}
-                        onClick={() => void selectDistro(item.name)}
+                        classList={{ "bg-surface-raised-base": selectedDistro() === item.name }}
+                        onClick={() => selectDistro(item.name)}
                       >
                         <div class="text-13-medium text-text-strong">{item.name}</div>
                         <div class="text-12-regular text-text-weak">
@@ -396,7 +371,7 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
                       variant="secondary"
                       size="small"
                       disabled={busy() || !installTarget()}
-                      onClick={() => void run(() => localServer()!.installDistro(installTarget()!.name))}
+                      onClick={() => void run(() => wslServers()!.installDistro(installTarget()!.name))}
                     >
                       Install
                     </Button>
@@ -472,7 +447,11 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
                 variant="secondary"
                 size="large"
                 disabled={busy() || !selectedInstalled()}
-                onClick={() => void run(() => localServer()!.openTerminal())}
+                onClick={() => {
+                  const distro = selectedDistro()
+                  if (!distro) return
+                  void run(() => wslServers()!.openTerminal(distro))
+                }}
               >
                 Open terminal
               </Button>
@@ -488,7 +467,11 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
                     variant="secondary"
                     size="large"
                     disabled={busy()}
-                    onClick={() => void run(() => localServer()!.installOpencode())}
+                    onClick={() => {
+                      const distro = selectedDistro()
+                      if (!distro) return
+                      void run(() => wslServers()!.installOpencode(distro))
+                    }}
                   >
                     {opencodeCheck()?.resolvedPath ? "Update OpenCode" : "Install OpenCode"}
                   </Button>
@@ -511,51 +494,6 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
                   </div>
                 )}
               </Show>
-            </div>
-          </Match>
-
-          <Match when={activeStep() === "switch"}>
-            <div class="rounded-md bg-surface-base p-4 flex flex-col gap-3">
-              <div class="flex items-center justify-between gap-3">
-                <div class="text-14-medium text-text-strong">Switch</div>
-                <div class="flex gap-2 shrink-0">
-                  <Show when={targetMode() === "windows" && configuredRuntime().mode !== "windows"}>
-                    <Button variant="secondary" size="large" onClick={() => void swapToWindows()}>
-                      Use Windows
-                    </Button>
-                  </Show>
-                  <Button
-                    variant="secondary"
-                    size="large"
-                    disabled={(targetMode() === "wsl" && !switchReady()) || !needsRestart()}
-                    onClick={() => void platform.restart()}
-                  >
-                    Restart OpenCode
-                  </Button>
-                </div>
-              </div>
-
-              <div class="text-12-regular text-text-weak whitespace-pre-wrap break-words">
-                {targetMode() === "windows"
-                  ? needsRestart()
-                    ? "Restart OpenCode to switch back to Windows."
-                    : "Windows Local Server is active."
-                  : needsRestart()
-                    ? `Restart OpenCode to start using ${configuredRuntimeLabel()}.`
-                    : `${configuredRuntimeLabel()} is active.`}
-              </div>
-
-              <div class="rounded-md border border-border-weak-base px-3 py-3 flex flex-col gap-1">
-                <div class="text-12-regular text-text-weak">
-                  After restart: <span class="text-text-strong">{configuredRuntimeLabel()}</span>
-                </div>
-                <div class="text-12-regular text-text-weak">
-                  Using now: <span class="text-text-strong">{currentRuntimeLabel()}</span>
-                </div>
-                <Show when={targetMode() === "wsl" && !switchReady()}>
-                  <div class="text-12-regular text-text-warning-base">Complete the earlier steps first.</div>
-                </Show>
-              </div>
             </div>
           </Match>
         </Switch>
@@ -595,7 +533,7 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
           )}
         </Show>
 
-        <Show when={current()?.status.kind === "failed" && (current()?.transcript.length ?? 0) > 0}>
+        <Show when={current()?.lastError && (current()?.transcript.length ?? 0) > 0}>
           <div class="rounded-md bg-surface-base p-4 flex flex-col gap-2">
             <div class="text-14-medium text-text-strong">Diagnostics</div>
             <div class="max-h-56 overflow-y-auto rounded-md border border-border-weak-base bg-background-base px-3 py-2 font-mono text-12-regular text-text-weak whitespace-pre-wrap break-words">
@@ -603,13 +541,27 @@ export function DialogLocalServer(props: { targetMode?: "windows" | "wsl" }) {
             </div>
           </div>
         </Show>
+
+        <div class="flex items-center justify-end gap-2">
+          <Button variant="ghost" size="large" disabled={store.adding} onClick={() => dialog.close()}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="large"
+            disabled={!allReady() || !selectedDistro() || store.adding || busy()}
+            onClick={() => void finish()}
+          >
+            {store.adding ? "Adding..." : "Add WSL server"}
+          </Button>
+        </div>
       </Show>
     </div>
   )
 }
 
 function requestError(language: ReturnType<typeof useLanguage>, err: unknown) {
-  console.error("Local Server request failed", err instanceof Error ? (err.stack ?? err.message) : String(err))
+  console.error("WSL servers request failed", err instanceof Error ? (err.stack ?? err.message) : String(err))
   showToast({
     variant: "error",
     title: language.t("common.requestFailed"),
@@ -617,47 +569,35 @@ function requestError(language: ReturnType<typeof useLanguage>, err: unknown) {
   })
 }
 
-function stepIndex(step: LocalServerStep) {
-  return WSL_STEPS.indexOf(step)
+function stepIndex(step: WslServerStep) {
+  return STEPS.indexOf(step)
 }
 
-function stepTitle(step: LocalServerStep) {
+function stepTitle(step: WslServerStep) {
   if (step === "wsl") return "WSL"
   if (step === "distro") return "Choose distro"
-  if (step === "opencode") return "OpenCode"
-  return "Switch"
-}
-
-function runtimeLabel(mode: LocalServerMode, distro: string | null) {
-  if (mode === "windows") return "Windows"
-  return distro ? `WSL on ${distro}` : "WSL"
+  return "OpenCode"
 }
 
 function stepState(
-  step: LocalServerStep,
+  step: WslServerStep,
   state: {
-    active: LocalServerStep
+    active: WslServerStep
     wslReady: boolean
     distroReady: boolean
     opencodeReady: boolean
     opencodeMismatch: boolean
-    switchReady: boolean
-    needsRestart: boolean
   },
 ) {
   if (state.active === step) return "current"
   if (step === "wsl") return state.wslReady ? "done" : "warning"
   if (step === "distro")
     return state.distroReady ? "done" : stepIndex(step) > stepIndex(state.active) ? "locked" : "warning"
-  if (step === "opencode")
-    return state.opencodeMismatch
-      ? "warning"
-      : state.opencodeReady
-        ? "done"
-        : stepIndex(step) > stepIndex(state.active)
-          ? "locked"
-          : "warning"
-  if (state.switchReady && !state.needsRestart) return "done"
-  if (stepIndex(step) > stepIndex(state.active)) return "locked"
-  return "warning"
+  return state.opencodeMismatch
+    ? "warning"
+    : state.opencodeReady
+      ? "done"
+      : stepIndex(step) > stepIndex(state.active)
+        ? "locked"
+        : "warning"
 }

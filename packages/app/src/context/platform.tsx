@@ -9,29 +9,25 @@ type OpenFilePickerOptions = { title?: string; multiple?: boolean; accept?: stri
 type SaveFilePickerOptions = { title?: string; defaultPath?: string }
 type UpdateInfo = { updateAvailable: boolean; version?: string }
 
-export type LocalServerMode = "windows" | "wsl"
-export type LocalServerStep = "wsl" | "distro" | "opencode" | "switch"
-export type LocalServerMismatchAcknowledgement = {
-  path: string
-  version: string
-}
-export type LocalServerWslCheck = {
+export type WslServerStep = "wsl" | "distro" | "opencode"
+
+export type WslRuntimeCheck = {
   available: boolean
   version: string | null
   status: string | null
   error: string | null
 }
-export type LocalServerInstalledDistro = {
+export type WslInstalledDistro = {
   name: string
   state: string | null
   version: number | null
   isDefault: boolean
 }
-export type LocalServerOnlineDistro = {
+export type WslOnlineDistro = {
   name: string
   label: string
 }
-export type LocalServerDistroProbe = {
+export type WslDistroProbe = {
   name: string
   canExecute: boolean
   hasBash: boolean
@@ -40,73 +36,82 @@ export type LocalServerDistroProbe = {
   isRoot: boolean | null
   error: string | null
 }
-export type LocalServerDistroCheck = {
-  installed: LocalServerInstalledDistro[]
-  online: LocalServerOnlineDistro[]
-  selected: LocalServerDistroProbe | null
-  error: string | null
-}
-export type LocalServerOpencodeCheck = {
-  distro: string | null
+export type WslOpencodeCheck = {
+  distro: string
   resolvedPath: string | null
   version: string | null
   expectedVersion: string | null
   matchesDesktop: boolean | null
   error: string | null
 }
-export type LocalServerTranscriptLine = {
+export type WslTranscriptLine = {
   stream: "stdout" | "stderr" | "system"
   text: string
   at: number
 }
-export type LocalServerConfig = {
-  mode: LocalServerMode
-  distro: string | null
-  onboarding: {
-    step: LocalServerStep | null
-    complete: boolean
-    pendingRestart: boolean
-  }
-  acknowledgements: {
-    root: string[]
-    mismatch: LocalServerMismatchAcknowledgement[]
-  }
+
+export type WslServerAcknowledgements = {
+  root: boolean
+  mismatch: { path: string; version: string } | null
 }
-export type LocalServerStatus =
-  | { kind: "idle" }
-  | { kind: "ready" }
-  | { kind: "running"; step: LocalServerStep | null }
-  | { kind: "failed"; step: LocalServerStep | null; message: string }
-export type LocalServerState = {
-  config: LocalServerConfig
-  runtime: {
-    key: string
-    mode: LocalServerMode
-    distro: string | null
-  }
-  status: LocalServerStatus
-  job: { step: LocalServerStep | null; startedAt: number } | null
-  checks: {
-    wsl: LocalServerWslCheck | null
-    distro: LocalServerDistroCheck | null
-    opencode: LocalServerOpencodeCheck | null
-  }
-  transcript: LocalServerTranscriptLine[]
+
+export type WslServerConfig = {
+  id: string
+  distro: string
+  acknowledgements: WslServerAcknowledgements
 }
-export type LocalServerEvent = {
-  type: "state"
-  state: LocalServerState
+
+export type WslServerRuntime =
+  | { kind: "starting" }
+  | { kind: "ready"; url: string; username: string | null; password: string | null }
+  | { kind: "failed"; message: string }
+  | { kind: "stopped" }
+
+export type WslServerItem = {
+  config: WslServerConfig
+  runtime: WslServerRuntime
 }
-export type LocalServerPlatform = {
-  getState(): Promise<LocalServerState>
-  setConfig(config: LocalServerConfig): Promise<void>
-  runStep(step: LocalServerStep): Promise<void>
-  cancelJob(): Promise<void>
+
+export type WslJob =
+  | { kind: "runtime"; startedAt: number }
+  | { kind: "distros"; startedAt: number }
+  | { kind: "install-wsl"; startedAt: number }
+  | { kind: "install-distro"; distro: string; startedAt: number }
+  | { kind: "probe-distro"; distro: string; startedAt: number }
+  | { kind: "probe-opencode"; distro: string; startedAt: number }
+  | { kind: "install-opencode"; distro: string; startedAt: number }
+
+export type WslServersState = {
+  runtime: WslRuntimeCheck | null
+  installed: WslInstalledDistro[]
+  online: WslOnlineDistro[]
+  distroProbes: Record<string, WslDistroProbe>
+  opencodeChecks: Record<string, WslOpencodeCheck>
+  pendingRestart: boolean
+  servers: WslServerItem[]
+  job: WslJob | null
+  transcript: WslTranscriptLine[]
+  lastError: string | null
+}
+export type WslServersEvent = { type: "state"; state: WslServersState }
+
+export type WslServersPlatform = {
+  getState(): Promise<WslServersState>
+  subscribe(cb: (event: WslServersEvent) => void): () => void
+  probeRuntime(): Promise<void>
+  refreshDistros(): Promise<void>
   installWsl(): Promise<void>
   installDistro(name: string): Promise<void>
-  installOpencode(): Promise<void>
-  openTerminal(): Promise<void>
-  subscribe(cb: (event: LocalServerEvent) => void): () => void
+  probeDistro(name: string): Promise<void>
+  probeOpencode(name: string): Promise<void>
+  installOpencode(name: string): Promise<void>
+  openTerminal(name: string): Promise<void>
+  addServer(distro: string): Promise<WslServerConfig>
+  removeServer(id: string): Promise<void>
+  startServer(id: string): Promise<void>
+  stopServer(id: string): Promise<void>
+  cancelJob(): Promise<void>
+  updateAcknowledgements(id: string, acks: Partial<WslServerAcknowledgements>): Promise<void>
 }
 
 export type Platform = {
@@ -164,14 +169,8 @@ export type Platform = {
   /** Set the default server URL to use on app startup (platform-specific) */
   setDefaultServer?(url: ServerConnection.Key | null): Promise<void> | void
 
-  /** Manage the desktop Local Server lifecycle (desktop only) */
-  localServer?: LocalServerPlatform
-
-  /** Get the configured WSL integration (desktop only) */
-  getWslEnabled?(): Promise<boolean>
-
-  /** Set the configured WSL integration (desktop only) */
-  setWslEnabled?(config: boolean): Promise<void> | void
+  /** Manage WSL sidecar servers (Electron on Windows only) */
+  wslServers?: WslServersPlatform
 
   /** Get the preferred display backend (desktop only) */
   getDisplayBackend?(): Promise<DisplayBackend | null> | DisplayBackend | null

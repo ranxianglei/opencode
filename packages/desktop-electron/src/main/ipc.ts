@@ -4,13 +4,13 @@ import type { IpcMainEvent, IpcMainInvokeEvent } from "electron"
 
 import type {
   InitStep,
-  LocalServerConfig,
-  LocalServerEvent,
-  LocalServerState,
-  LocalServerStep,
   ServerReadyData,
   SqliteMigrationProgress,
   TitlebarTheme,
+  WslServerAcknowledgements,
+  WslServerConfig,
+  WslServersEvent,
+  WslServersState,
 } from "../preload/types"
 import { getStore } from "./store"
 import { setTitlebar } from "./windows"
@@ -23,15 +23,22 @@ const pickerFilters = (ext?: string[]) => {
 type Deps = {
   killSidecar: () => void
   awaitInitialization: (sendStep: (step: InitStep) => void) => Promise<ServerReadyData>
-  getLocalServerState: () => Promise<LocalServerState> | LocalServerState
-  setLocalServerConfig: (config: LocalServerConfig) => Promise<void> | void
-  runLocalServerStep: (step: LocalServerStep) => Promise<void> | void
-  cancelLocalServerJob: () => Promise<void> | void
-  installLocalServerWsl: () => Promise<void> | void
-  installLocalServerDistro: (name: string) => Promise<void> | void
-  installLocalServerOpencode: () => Promise<void> | void
-  openLocalServerTerminal: () => Promise<void> | void
-  onLocalServerEvent: (listener: (event: LocalServerEvent) => void) => () => void
+  getWslServersState: () => Promise<WslServersState> | WslServersState
+  onWslServersEvent: (listener: (event: WslServersEvent) => void) => () => void
+  wslServersProbeRuntime: () => Promise<void> | void
+  wslServersRefreshDistros: () => Promise<void> | void
+  wslServersInstallWsl: () => Promise<void> | void
+  wslServersInstallDistro: (name: string) => Promise<void> | void
+  wslServersProbeDistro: (name: string) => Promise<void> | void
+  wslServersProbeOpencode: (name: string) => Promise<void> | void
+  wslServersInstallOpencode: (name: string) => Promise<void> | void
+  wslServersOpenTerminal: (name: string) => Promise<void> | void
+  wslServersAddServer: (distro: string) => Promise<WslServerConfig> | WslServerConfig
+  wslServersRemoveServer: (id: string) => Promise<void> | void
+  wslServersStartServer: (id: string) => Promise<void> | void
+  wslServersStopServer: (id: string) => Promise<void> | void
+  wslServersCancelJob: () => Promise<void> | void
+  wslServersUpdateAcknowledgements: (id: string, acks: Partial<WslServerAcknowledgements>) => Promise<void> | void
   getDefaultServerUrl: () => Promise<string | null> | string | null
   setDefaultServerUrl: (url: string | null) => Promise<void> | void
   getDisplayBackend: () => Promise<string | null>
@@ -48,33 +55,48 @@ type Deps = {
 }
 
 export function registerIpcHandlers(deps: Deps) {
-  const offLocalServer = deps.onLocalServerEvent((payload) => {
+  const offWslServers = deps.onWslServersEvent((payload) => {
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed()) continue
-      win.webContents.send("local-server-event", payload)
+      win.webContents.send("wsl-servers-event", payload)
     }
   })
-  app.once("will-quit", offLocalServer)
+  app.once("will-quit", offWslServers)
 
   ipcMain.handle("kill-sidecar", () => deps.killSidecar())
   ipcMain.handle("await-initialization", (event: IpcMainInvokeEvent) => {
     const send = (step: InitStep) => event.sender.send("init-step", step)
     return deps.awaitInitialization(send)
   })
-  ipcMain.handle("local-server-get-state", () => deps.getLocalServerState())
-  ipcMain.handle("local-server-set-config", (_event: IpcMainInvokeEvent, config: LocalServerConfig) =>
-    deps.setLocalServerConfig(config),
+  ipcMain.handle("wsl-servers-get-state", () => deps.getWslServersState())
+  ipcMain.handle("wsl-servers-probe-runtime", () => deps.wslServersProbeRuntime())
+  ipcMain.handle("wsl-servers-refresh-distros", () => deps.wslServersRefreshDistros())
+  ipcMain.handle("wsl-servers-install-wsl", () => deps.wslServersInstallWsl())
+  ipcMain.handle("wsl-servers-install-distro", (_event: IpcMainInvokeEvent, name: string) =>
+    deps.wslServersInstallDistro(name),
   )
-  ipcMain.handle("local-server-run-step", (_event: IpcMainInvokeEvent, step: LocalServerStep) =>
-    deps.runLocalServerStep(step),
+  ipcMain.handle("wsl-servers-probe-distro", (_event: IpcMainInvokeEvent, name: string) =>
+    deps.wslServersProbeDistro(name),
   )
-  ipcMain.handle("local-server-cancel-job", () => deps.cancelLocalServerJob())
-  ipcMain.handle("local-server-install-wsl", () => deps.installLocalServerWsl())
-  ipcMain.handle("local-server-install-distro", (_event: IpcMainInvokeEvent, name: string) =>
-    deps.installLocalServerDistro(name),
+  ipcMain.handle("wsl-servers-probe-opencode", (_event: IpcMainInvokeEvent, name: string) =>
+    deps.wslServersProbeOpencode(name),
   )
-  ipcMain.handle("local-server-install-opencode", () => deps.installLocalServerOpencode())
-  ipcMain.handle("local-server-open-terminal", () => deps.openLocalServerTerminal())
+  ipcMain.handle("wsl-servers-install-opencode", (_event: IpcMainInvokeEvent, name: string) =>
+    deps.wslServersInstallOpencode(name),
+  )
+  ipcMain.handle("wsl-servers-open-terminal", (_event: IpcMainInvokeEvent, name: string) =>
+    deps.wslServersOpenTerminal(name),
+  )
+  ipcMain.handle("wsl-servers-add", (_event: IpcMainInvokeEvent, distro: string) => deps.wslServersAddServer(distro))
+  ipcMain.handle("wsl-servers-remove", (_event: IpcMainInvokeEvent, id: string) => deps.wslServersRemoveServer(id))
+  ipcMain.handle("wsl-servers-start", (_event: IpcMainInvokeEvent, id: string) => deps.wslServersStartServer(id))
+  ipcMain.handle("wsl-servers-stop", (_event: IpcMainInvokeEvent, id: string) => deps.wslServersStopServer(id))
+  ipcMain.handle("wsl-servers-cancel", () => deps.wslServersCancelJob())
+  ipcMain.handle(
+    "wsl-servers-update-acknowledgements",
+    (_event: IpcMainInvokeEvent, id: string, acks: Partial<WslServerAcknowledgements>) =>
+      deps.wslServersUpdateAcknowledgements(id, acks),
+  )
   ipcMain.handle("get-default-server-url", () => deps.getDefaultServerUrl())
   ipcMain.handle("set-default-server-url", (_event: IpcMainInvokeEvent, url: string | null) =>
     deps.setDefaultServerUrl(url),

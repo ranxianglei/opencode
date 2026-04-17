@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { existsSync } from "node:fs"
-import { createServer } from "node:net"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import type { Event } from "electron"
@@ -36,14 +35,14 @@ const { autoUpdater } = pkg
 
 import type { InitStep, ServerReadyData, SqliteMigrationProgress } from "../preload/types"
 import { checkAppExists, resolveAppPath, wslPath } from "./apps"
-import { CHANNEL, LOCAL_SERVER_KEY, UPDATER_ENABLED } from "./constants"
+import { CHANNEL, UPDATER_ENABLED, WSL_SERVERS_KEY } from "./constants"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand, sendSqliteMigrationProgress } from "./ipc"
-import { createLocalServerController } from "./local-server"
 import { initLogging } from "./logging"
 import { parseMarkdown } from "./markdown"
 import { createMenu } from "./menu"
-import { getDefaultServerUrl, setDefaultServerUrl, spawnLocalServer, spawnWslLocalServer } from "./server"
+import { allocatePort, getDefaultServerUrl, setDefaultServerUrl, spawnLocalServer, spawnWslSidecar } from "./server"
 import { store } from "./store"
+import { createWslServersController } from "./wsl-servers"
 import { createLoadingWindow, createMainWindow, setBackgroundColor, setDockIcon } from "./windows"
 
 const initEmitter = new EventEmitter()
@@ -57,7 +56,13 @@ const pendingDeepLinks: string[] = []
 
 const serverReady = defer<ServerReadyData>()
 void serverReady.promise.catch(() => undefined)
-const localServer = createLocalServerController(app.getVersion())
+const wslServers = createWslServersController(app.getVersion(), async (distro) => {
+  const logger = initLogging()
+  logger.log("spawning wsl sidecar", { distro })
+  return spawnWslSidecar(distro, {
+    onLine: (line) => logger.log("wsl sidecar", { distro, stream: line.stream, text: line.text }),
+  })
+})
 const logger = initLogging()
 
 logger.log("app starting", {
@@ -67,8 +72,8 @@ logger.log("app starting", {
 logger.log("config paths", {
   userData: app.getPath("userData"),
   settingsStore: store.path,
-  localServerKey: LOCAL_SERVER_KEY,
-  localServer: store.get(LOCAL_SERVER_KEY) ?? null,
+  wslServersKey: WSL_SERVERS_KEY,
+  wslServers: store.get(WSL_SERVERS_KEY) ?? null,
 })
 
 setupApp()
@@ -107,15 +112,18 @@ function setupApp() {
 
   app.on("before-quit", () => {
     killSidecar()
+    wslServers.stopAll()
   })
 
   app.on("will-quit", () => {
     killSidecar()
+    wslServers.stopAll()
   })
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
       killSidecar()
+      wslServers.stopAll()
       app.exit(0)
     })
   }
@@ -151,56 +159,38 @@ async function initialize() {
   const sqliteDone = needsMigration ? defer<void>() : undefined
   let overlay: BrowserWindow | null = null
 
-  const port = await getSidecarPort()
+  const port = await allocatePort()
   const hostname = "127.0.0.1"
   const url = `http://${hostname}:${port}`
   const password = randomUUID()
-  const config = localServer.getState().config
-  const runtime =
-    config.mode === "wsl" && config.distro
-      ? {
-          key: `local:wsl:${config.distro}`,
-          mode: "wsl" as const,
-          distro: config.distro,
-        }
-      : {
-          key: "local:windows",
-          mode: "windows" as const,
-          distro: null,
-        }
+  const key = "local:windows"
 
-  logger.log("spawning sidecar", { url })
-  localServer.setRuntime(runtime)
-  localServer.setStatus({ kind: "running", step: null })
-  const startupData = {
+  logger.log("spawning windows sidecar", { url })
+  const startupData: ServerReadyData = {
     url,
     username: "opencode",
     password,
-    local: runtime,
+    local: {
+      key,
+      url,
+      username: "opencode",
+      password,
+    },
   }
   let startupError: Error | null = null
   const startup = await (async () => {
     try {
-      if (runtime.mode === "wsl") {
-        if (!runtime.distro) throw new Error("No WSL distro selected")
-        return await spawnWslLocalServer(runtime.distro, port, password, {
-          onLine: (line) =>
-            logger.log("wsl sidecar startup", { distro: runtime.distro, stream: line.stream, text: line.text }),
-        })
-      }
       return await spawnLocalServer(hostname, port, password)
     } catch (error) {
       startupError = asError(error)
-      localServer.setStatus({
-        kind: "failed",
-        step: null,
-        message: startupError.message,
-      })
-      logger.error("local server startup failed", startupError)
+      logger.error("windows sidecar startup failed", startupError)
       return undefined
     }
   })()
   server = startup?.listener ?? null
+
+  // Initialize WSL sidecars in parallel; failures do not block app startup.
+  void wslServers.initialize().catch((error) => logger.error("wsl server initialization failed", asError(error)))
 
   const loadingTask = (async () => {
     logger.log("sidecar connection started", { url })
@@ -224,16 +214,10 @@ async function initialize() {
         }),
       ])
         .then(() => {
-          localServer.setStatus({ kind: "ready" })
           serverReady.resolve(startupData)
         })
         .catch((error) => {
           startupError = asError(error)
-          localServer.setStatus({
-            kind: "failed",
-            step: null,
-            message: startupError.message,
-          })
           logger.error("sidecar health check failed", startupError)
           serverReady.reject(startupError)
         })
@@ -321,6 +305,7 @@ function wireMenu() {
     reload: () => mainWindow?.reload(),
     relaunch: () => {
       killSidecar()
+      wslServers.stopAll()
       app.relaunch()
       app.exit(0)
     },
@@ -342,15 +327,22 @@ registerIpcHandlers({
       initEmitter.off("step", listener)
     }
   },
-  getLocalServerState: () => localServer.getState(),
-  setLocalServerConfig: (config) => localServer.setConfig(config),
-  runLocalServerStep: (step) => localServer.runStep(step),
-  cancelLocalServerJob: () => localServer.cancelJob(),
-  installLocalServerWsl: () => localServer.installWsl(),
-  installLocalServerDistro: (name) => localServer.installDistro(name),
-  installLocalServerOpencode: () => localServer.installOpencode(),
-  openLocalServerTerminal: () => localServer.openTerminal(),
-  onLocalServerEvent: (listener) => localServer.subscribe(listener),
+  getWslServersState: () => wslServers.getState(),
+  onWslServersEvent: (listener) => wslServers.subscribe(listener),
+  wslServersProbeRuntime: () => wslServers.probeRuntime(),
+  wslServersRefreshDistros: () => wslServers.refreshDistros(),
+  wslServersInstallWsl: () => wslServers.installWsl(),
+  wslServersInstallDistro: (name) => wslServers.installDistro(name),
+  wslServersProbeDistro: (name) => wslServers.probeDistro(name),
+  wslServersProbeOpencode: (name) => wslServers.probeOpencode(name),
+  wslServersInstallOpencode: (name) => wslServers.installOpencode(name),
+  wslServersOpenTerminal: (name) => wslServers.openTerminal(name),
+  wslServersAddServer: (distro) => wslServers.addServer(distro),
+  wslServersRemoveServer: (id) => wslServers.removeServer(id),
+  wslServersStartServer: (id) => wslServers.startServer(id),
+  wslServersStopServer: (id) => wslServers.stopServer(id),
+  wslServersCancelJob: () => wslServers.cancelJob(),
+  wslServersUpdateAcknowledgements: (id, acks) => wslServers.updateAcknowledgements(id, acks),
   getDefaultServerUrl: () => getDefaultServerUrl(),
   setDefaultServerUrl: (url) => setDefaultServerUrl(url),
   getDisplayBackend: async () => null,
@@ -390,29 +382,6 @@ function ensureLoopbackNoProxy() {
 
   upsert("NO_PROXY")
   upsert("no_proxy")
-}
-
-async function getSidecarPort() {
-  const fromEnv = process.env.OPENCODE_PORT
-  if (fromEnv) {
-    const parsed = Number.parseInt(fromEnv, 10)
-    if (!Number.isNaN(parsed)) return parsed
-  }
-
-  return await new Promise<number>((resolve, reject) => {
-    const server = createServer()
-    server.on("error", reject)
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address()
-      if (typeof address !== "object" || !address) {
-        server.close()
-        reject(new Error("Failed to get port"))
-        return
-      }
-      const port = address.port
-      server.close(() => resolve(port))
-    })
-  })
 }
 
 function sqliteFileExists() {
@@ -478,6 +447,7 @@ async function checkUpdate() {
 async function installUpdate() {
   if (!updateReady) return
   killSidecar()
+  wslServers.stopAll()
   autoUpdater.quitAndInstall()
 }
 

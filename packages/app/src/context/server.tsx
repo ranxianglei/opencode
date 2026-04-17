@@ -214,6 +214,13 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       onCleanup(startHealthPolling(current_))
     })
 
+    createEffect(() => {
+      const key = state.active
+      if (typeof window === "undefined") return
+      window.__OPENCODE__ ??= {}
+      window.__OPENCODE__.activeServer = key
+    })
+
     const origin = createMemo(() => projectsKey(state.active))
     const projectsList = createMemo(() => store.projects[origin()] ?? [])
     const current: Accessor<ServerConnection.Any | undefined> = createMemo(

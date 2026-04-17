@@ -5,7 +5,6 @@ import {
   ACCEPTED_FILE_TYPES,
   AppBaseProviders,
   AppInterface,
-  DialogLocalServer,
   handleNotificationClick,
   loadLocaleDict,
   normalizeLocale,
@@ -14,10 +13,12 @@ import {
   PlatformProvider,
   ServerConnection,
   useCommand,
+  type WslServersEvent,
+  type WslServersState,
 } from "@opencode-ai/app"
 import type { AsyncStorage } from "@solid-primitives/storage"
 import { MemoryRouter } from "@solidjs/router"
-import { createEffect, createResource, onCleanup, onMount, Show } from "solid-js"
+import { createEffect, createResource, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { render } from "solid-js/web"
 import pkg from "../../package.json"
 import { initI18n, t } from "./i18n"
@@ -25,8 +26,6 @@ import { UPDATER_ENABLED } from "./updater"
 import { webviewZoom } from "./webview-zoom"
 import "./styles.css"
 import { Button } from "@opencode-ai/ui/button"
-import { useDialog } from "@opencode-ai/ui/context/dialog"
-import { Dialog } from "@opencode-ai/ui/dialog"
 import { Splash } from "@opencode-ai/ui/logo"
 import { useTheme } from "@opencode-ai/ui/theme"
 
@@ -54,27 +53,14 @@ const listenForDeepLinks = () => {
 }
 
 function LocalServerStartupError(props: { message: string }) {
-  const dialog = useDialog()
-
   return (
     <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base gap-6 p-6">
       <div class="flex flex-col items-center max-w-md text-center">
         <Splash class="w-12 h-15 mb-4" />
         <p class="text-16-medium text-text-strong">Local Server failed to start</p>
         <p class="mt-2 text-12-regular text-text-weak whitespace-pre-wrap break-words">{props.message}</p>
-        <Button
-          variant="secondary"
-          size="large"
-          class="mt-4"
-          onClick={() =>
-            dialog.show(() => (
-              <Dialog title="Local Server" dismissOutside={false}>
-                <DialogLocalServer />
-              </Dialog>
-            ))
-          }
-        >
-          Open Local Server
+        <Button variant="secondary" size="large" class="mt-4" onClick={() => window.api.relaunch()}>
+          Relaunch
         </Button>
       </div>
     </div>
@@ -90,21 +76,20 @@ const createPlatform = (): Platform => {
     return undefined
   })()
 
-  const wslDistro = async () => {
-    if (os !== "windows") return
-    const state = await window.api.localServer.getState().catch(() => null)
-    if (state?.config.mode !== "wsl") return
-    return state.config.distro
+  const activeWslDistro = () => {
+    const key = window.__OPENCODE__?.activeServer
+    if (!key || !key.startsWith("wsl:")) return undefined
+    return key.slice("wsl:".length)
   }
 
   const wslHome = async () => {
-    const distro = await wslDistro()
+    const distro = activeWslDistro()
     if (!distro) return undefined
     return window.api.wslPath("~", "windows", distro).catch(() => undefined)
   }
 
   const handleWslPicker = async <T extends string | string[]>(result: T | null): Promise<T | null> => {
-    const distro = await wslDistro()
+    const distro = activeWslDistro()
     if (!result || !distro) return result
     if (Array.isArray(result)) {
       return Promise.all(result.map((path) => window.api.wslPath(path, "linux", distro).catch(() => path))) as any
@@ -138,6 +123,8 @@ const createPlatform = (): Platform => {
       return api
     }
   })()
+
+  const wslServersApi = os === "windows" ? window.api.wslServers : undefined
 
   return {
     platform: "desktop",
@@ -179,7 +166,7 @@ const createPlatform = (): Platform => {
       if (os === "windows") {
         const resolvedApp = app ? await window.api.resolveAppPath(app).catch(() => null) : null
         const resolvedPath = await (async () => {
-          const distro = await wslDistro()
+          const distro = activeWslDistro()
           if (distro) {
             const converted = await window.api.wslPath(path, "windows", distro).catch(() => null)
             if (converted) return converted
@@ -247,17 +234,7 @@ const createPlatform = (): Platform => {
       await window.api.setDefaultServerUrl(url)
     },
 
-    localServer: {
-      getState: () => window.api.localServer.getState(),
-      setConfig: (config) => window.api.localServer.setConfig(config),
-      runStep: (step) => window.api.localServer.runStep(step),
-      cancelJob: () => window.api.localServer.cancelJob(),
-      installWsl: () => window.api.localServer.installWsl(),
-      installDistro: (name) => window.api.localServer.installDistro(name),
-      installOpencode: () => window.api.localServer.installOpencode(),
-      openTerminal: () => window.api.localServer.openTerminal(),
-      subscribe: (cb) => window.api.localServer.subscribe(cb),
-    },
+    wslServers: wslServersApi,
 
     getDisplayBackend: async () => {
       return window.api.getDisplayBackend().catch(() => null)
@@ -329,22 +306,52 @@ render(() => {
   )
   const [locale] = createResource(loadLocale)
 
+  const [wslServers, setWslServers] = createSignal<WslServersState | null>(null)
+  if (platform.wslServers) {
+    void platform.wslServers.getState().then((state) => setWslServers(state))
+    const off = platform.wslServers.subscribe((event: WslServersEvent) => setWslServers(event.state))
+    onCleanup(off)
+  }
+
   const servers = () => {
     const data = startup.latest?.sidecar
-    if (!data) return []
-    const server: ServerConnection.Sidecar = {
-      displayName: "Local Server",
-      type: "sidecar",
-      ...(data.local.mode === "wsl" && data.local.distro
-        ? { variant: "wsl", distro: data.local.distro }
-        : { variant: "base" }),
-      http: {
-        url: data.url,
-        username: data.username ?? undefined,
-        password: data.password ?? undefined,
-      },
+    const list: ServerConnection.Any[] = []
+    if (data) {
+      list.push({
+        displayName: "Local Server",
+        type: "sidecar",
+        variant: "base",
+        http: {
+          url: data.local.url,
+          username: data.local.username ?? undefined,
+          password: data.local.password ?? undefined,
+        },
+      })
     }
-    return [server] as ServerConnection.Any[]
+    const wsl = wslServers()
+    if (wsl) {
+      for (const item of wsl.servers) {
+        const runtime = item.runtime
+        const http =
+          runtime.kind === "ready"
+            ? {
+                url: runtime.url,
+                username: runtime.username ?? undefined,
+                password: runtime.password ?? undefined,
+              }
+            : {
+                url: `http://wsl-${item.config.distro}.invalid`,
+              }
+        list.push({
+          displayName: `WSL: ${item.config.distro}`,
+          type: "sidecar",
+          variant: "wsl",
+          distro: item.config.distro,
+          http,
+        })
+      }
+    }
+    return list
   }
 
   function handleClick(e: MouseEvent) {

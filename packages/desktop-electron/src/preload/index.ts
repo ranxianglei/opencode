@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron"
-import type { ElectronAPI, InitStep, LocalServerEvent, SqliteMigrationProgress } from "./types"
+import type { ElectronAPI, InitStep, SqliteMigrationProgress, WslServersEvent } from "./types"
 
 const api: ElectronAPI = {
   killSidecar: () => ipcRenderer.invoke("kill-sidecar"),
@@ -11,20 +11,27 @@ const api: ElectronAPI = {
       ipcRenderer.removeListener("init-step", handler)
     })
   },
-  localServer: {
-    getState: () => ipcRenderer.invoke("local-server-get-state"),
-    setConfig: (config) => ipcRenderer.invoke("local-server-set-config", config),
-    runStep: (step) => ipcRenderer.invoke("local-server-run-step", step),
-    cancelJob: () => ipcRenderer.invoke("local-server-cancel-job"),
-    installWsl: () => ipcRenderer.invoke("local-server-install-wsl"),
-    installDistro: (name) => ipcRenderer.invoke("local-server-install-distro", name),
-    installOpencode: () => ipcRenderer.invoke("local-server-install-opencode"),
-    openTerminal: () => ipcRenderer.invoke("local-server-open-terminal"),
+  wslServers: {
+    getState: () => ipcRenderer.invoke("wsl-servers-get-state"),
     subscribe: (cb) => {
-      const handler = (_: unknown, event: LocalServerEvent) => cb(event)
-      ipcRenderer.on("local-server-event", handler)
-      return () => ipcRenderer.removeListener("local-server-event", handler)
+      const handler = (_: unknown, event: WslServersEvent) => cb(event)
+      ipcRenderer.on("wsl-servers-event", handler)
+      return () => ipcRenderer.removeListener("wsl-servers-event", handler)
     },
+    probeRuntime: () => ipcRenderer.invoke("wsl-servers-probe-runtime"),
+    refreshDistros: () => ipcRenderer.invoke("wsl-servers-refresh-distros"),
+    installWsl: () => ipcRenderer.invoke("wsl-servers-install-wsl"),
+    installDistro: (name) => ipcRenderer.invoke("wsl-servers-install-distro", name),
+    probeDistro: (name) => ipcRenderer.invoke("wsl-servers-probe-distro", name),
+    probeOpencode: (name) => ipcRenderer.invoke("wsl-servers-probe-opencode", name),
+    installOpencode: (name) => ipcRenderer.invoke("wsl-servers-install-opencode", name),
+    openTerminal: (name) => ipcRenderer.invoke("wsl-servers-open-terminal", name),
+    addServer: (distro) => ipcRenderer.invoke("wsl-servers-add", distro),
+    removeServer: (id) => ipcRenderer.invoke("wsl-servers-remove", id),
+    startServer: (id) => ipcRenderer.invoke("wsl-servers-start", id),
+    stopServer: (id) => ipcRenderer.invoke("wsl-servers-stop", id),
+    cancelJob: () => ipcRenderer.invoke("wsl-servers-cancel"),
+    updateAcknowledgements: (id, acks) => ipcRenderer.invoke("wsl-servers-update-acknowledgements", id, acks),
   },
   getDefaultServerUrl: () => ipcRenderer.invoke("get-default-server-url"),
   setDefaultServerUrl: (url) => ipcRenderer.invoke("set-default-server-url", url),

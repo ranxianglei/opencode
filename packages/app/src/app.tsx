@@ -76,7 +76,7 @@ declare global {
     __OPENCODE__?: {
       updaterEnabled?: boolean
       deepLinks?: string[]
-      wsl?: boolean
+      activeServer?: string
     }
     api?: {
       setTitlebar?: (theme: { mode: "light" | "dark" }) => Promise<void>
@@ -234,7 +234,7 @@ function ConnectionError(props: { onRetry?: () => void; onServerSelected?: (key:
   const name = createMemo(() => server.name || server.key)
   const serverToken = "\u0000server\u0000"
   const unreachable = createMemo(() => language.t("app.server.unreachable", { server: serverToken }).split(serverToken))
-  const canOpenLocalServer = createMemo(() => !!platform.localServer && server.current?.type === "sidecar")
+  const canManage = createMemo(() => server.current?.type === "sidecar" && server.current?.variant === "wsl")
 
   const timer = setInterval(() => props.onRetry?.(), 1000)
   onCleanup(() => clearInterval(timer))
@@ -249,18 +249,18 @@ function ConnectionError(props: { onRetry?: () => void; onServerSelected?: (key:
           {unreachable()[1]}
         </p>
         <p class="mt-1 text-12-regular text-text-weak">{language.t("app.server.retrying")}</p>
-        <Show when={canOpenLocalServer()}>
+        <Show when={canManage() && !!platform.wslServers}>
           <Button
             variant="secondary"
             size="large"
             class="mt-4"
             onClick={() => {
               void import("@/components/dialog-select-server").then((x) => {
-                dialog.show(() => <x.DialogSelectServer initialView="local" />)
+                dialog.show(() => <x.DialogSelectServer />)
               })
             }}
           >
-            Open Local Server
+            Manage servers
           </Button>
         </Show>
       </div>

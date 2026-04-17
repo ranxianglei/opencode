@@ -5,24 +5,22 @@ import { DropdownMenu } from "@opencode-ai/ui/dropdown-menu"
 import { Icon } from "@opencode-ai/ui/icon"
 import { IconButton } from "@opencode-ai/ui/icon-button"
 import { List } from "@opencode-ai/ui/list"
-import { Popover } from "@opencode-ai/ui/popover"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { useMutation } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
 import { createEffect, createMemo, createResource, onCleanup, Show } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
-import { DialogLocalServer } from "@/components/dialog-local-server"
+import { DialogWslServer } from "@/components/dialog-wsl-server"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
 import { useLanguage } from "@/context/language"
-import { type LocalServerConfig, usePlatform } from "@/context/platform"
+import { usePlatform } from "@/context/platform"
 import { normalizeServerUrl, ServerConnection, useServer } from "@/context/server"
 import { type ServerHealth, useCheckServerHealth } from "@/utils/server-health"
 
 const DEFAULT_USERNAME = "opencode"
 
 interface DialogSelectServerProps {
-  initialView?: "list" | "local"
-  initialTargetMode?: "windows" | "wsl"
+  initialView?: "list" | "add-wsl"
   onNavigateHome?: () => void
 }
 
@@ -197,10 +195,8 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
       showForm: false,
       status: undefined as boolean | undefined,
     },
-    localServer: {
-      showPage: props.initialView === "local",
-      targetMode: props.initialTargetMode as "windows" | "wsl" | undefined,
-      confirmSwapKey: undefined as ServerConnection.Key | undefined,
+    addWsl: {
+      showWizard: props.initialView === "add-wsl",
     },
     editServer: {
       id: undefined as string | undefined,
@@ -430,8 +426,8 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     )
   }
 
-  const mode = createMemo<"list" | "local" | "add" | "edit">(() => {
-    if (store.localServer.showPage) return "local"
+  const mode = createMemo<"list" | "add-wsl" | "add" | "edit">(() => {
+    if (store.addWsl.showWizard) return "add-wsl"
     if (store.editServer.id) return "edit"
     if (store.addServer.showForm) return "add"
     return "list"
@@ -445,12 +441,11 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   const resetForm = () => {
     resetAdd()
     resetEdit()
-    setStore("localServer", "showPage", false)
-    setStore("localServer", "targetMode", undefined)
+    setStore("addWsl", "showWizard", false)
   }
 
   const startAdd = () => {
-    setStore("localServer", "showPage", false)
+    setStore("addWsl", "showWizard", false)
     resetEdit()
     setStore("addServer", {
       showForm: true,
@@ -464,7 +459,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   }
 
   const startEdit = (conn: ServerConnection.Http) => {
-    setStore("localServer", "showPage", false)
+    setStore("addWsl", "showWizard", false)
     resetAdd()
     setStore("editServer", {
       id: conn.http.url,
@@ -477,65 +472,10 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     })
   }
 
-  const startLocal = (targetMode?: "windows" | "wsl") => {
+  const startAddWsl = () => {
     resetAdd()
     resetEdit()
-    setStore("localServer", "showPage", true)
-    setStore("localServer", "targetMode", targetMode)
-    setStore("localServer", "confirmSwapKey", undefined)
-  }
-
-  const plainConfig = (config: LocalServerConfig): LocalServerConfig => structuredClone(config)
-
-  const swapLocalToWindows = async () => {
-    const localServer = platform.localServer
-    if (!localServer) return
-
-    try {
-      const state = await localServer.getState()
-      const config = plainConfig(state.config)
-      await localServer.setConfig({
-        ...config,
-        mode: "windows",
-        distro: null,
-        onboarding: {
-          ...config.onboarding,
-          complete: true,
-          pendingRestart: false,
-          step: null,
-        },
-      })
-      setStore("localServer", "confirmSwapKey", undefined)
-      showToast({
-        variant: "success",
-        title: "Local Server set to Windows",
-        description: "Restart OpenCode to finish switching back to Windows.",
-        persistent: true,
-        actions: [
-          {
-            label: "Restart",
-            onClick: () => void platform.restart(),
-          },
-        ],
-      })
-    } catch (err) {
-      console.error("Local Server request failed", err instanceof Error ? (err.stack ?? err.message) : String(err))
-      showToast({
-        variant: "error",
-        title: language.t("common.requestFailed"),
-        description: err instanceof Error ? err.message : String(err),
-      })
-    }
-  }
-
-  const localSwapLabel = (conn: ServerConnection.Any) => {
-    if (conn.type !== "sidecar") return ""
-    return conn.variant === "wsl" ? "Swap to Windows" : "Swap to WSL"
-  }
-
-  const localSwapTarget = (conn: ServerConnection.Any) => {
-    if (conn.type !== "sidecar") return undefined
-    return conn.variant === "wsl" ? "windows" : "wsl"
+    setStore("addWsl", "showWizard", true)
   }
 
   const submitForm = () => {
@@ -554,8 +494,9 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
 
   const isFormMode = createMemo(() => mode() !== "list")
   const isAddMode = createMemo(() => mode() === "add")
-  const isLocalMode = createMemo(() => mode() === "local")
+  const isAddWslMode = createMemo(() => mode() === "add-wsl")
   const formBusy = createMemo(() => (isAddMode() ? addMutation.isPending : editMutation.isPending))
+  const canAddWsl = createMemo(() => !!platform.wslServers && platform.os === "windows")
 
   const formTitle = createMemo(() => {
     if (!isFormMode()) return language.t("dialog.server.title")
@@ -563,8 +504,8 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
       <div class="flex items-center gap-2 -ml-2">
         <IconButton icon="arrow-left" variant="ghost" onClick={resetForm} aria-label={language.t("common.goBack")} />
         <span>
-          {isLocalMode()
-            ? "Local Server"
+          {isAddWslMode()
+            ? "Add WSL server"
             : isAddMode()
               ? language.t("dialog.server.add.title")
               : language.t("dialog.server.edit.title")}
@@ -579,21 +520,44 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     resetEdit()
   })
 
-  async function handleRemove(url: ServerConnection.Key) {
-    server.remove(url)
-    if ((await platform.getDefaultServer?.()) === url) {
+  async function handleRemove(key: ServerConnection.Key) {
+    server.remove(key)
+    if ((await platform.getDefaultServer?.()) === key) {
       void platform.setDefaultServer?.(null)
     }
   }
 
+  async function handleRemoveWsl(conn: ServerConnection.Any) {
+    if (conn.type !== "sidecar" || conn.variant !== "wsl") return
+    const key = ServerConnection.key(conn)
+    try {
+      await platform.wslServers?.removeServer(key)
+      server.remove(key)
+      if ((await platform.getDefaultServer?.()) === key) {
+        void platform.setDefaultServer?.(null)
+      }
+    } catch (err) {
+      showRequestError(language, err)
+    }
+  }
+
+  async function handleRetryWsl(conn: ServerConnection.Any) {
+    if (conn.type !== "sidecar" || conn.variant !== "wsl") return
+    try {
+      await platform.wslServers?.startServer(ServerConnection.key(conn))
+    } catch (err) {
+      showRequestError(language, err)
+    }
+  }
+
   return (
-    <Dialog title={formTitle()} dismissOutside={!isLocalMode()}>
+    <Dialog title={formTitle()} dismissOutside={!isAddWslMode()}>
       <div class="flex flex-col gap-2">
         <Show
           when={!isFormMode()}
           fallback={
             <Show
-              when={isLocalMode()}
+              when={isAddWslMode()}
               fallback={
                 <ServerForm
                   value={isAddMode() ? store.addServer.url : store.editServer.value}
@@ -613,7 +577,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                 />
               }
             >
-              <DialogLocalServer targetMode={store.localServer.targetMode} />
+              <DialogWslServer />
             </Show>
           }
         >
@@ -625,7 +589,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
             noInitialSelection
             emptyMessage={language.t("dialog.server.empty")}
             items={sortedItems}
-            key={(x) => x.http.url}
+            key={(x) => ServerConnection.key(x)}
             onSelect={(x) => {
               if (x) void select(x)
             }}
@@ -634,6 +598,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
           >
             {(i) => {
               const key = ServerConnection.key(i)
+              const isWslSidecar = i.type === "sidecar" && i.variant === "wsl"
               return (
                 <div class="flex items-center gap-3 min-w-0 flex-1 w-full group/item">
                   <div class="flex flex-col h-full items-start w-5">
@@ -654,85 +619,11 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                     showCredentials
                   />
                   <div class="flex items-center justify-center gap-3 pl-4">
-                    <Show when={platform.localServer && i.type === "sidecar"}>
-                      {(() => {
-                        const sidecar = i as ServerConnection.Sidecar
-                        if (sidecar.variant !== "wsl") {
-                          return (
-                            <Button
-                              variant="secondary"
-                              size="small"
-                              class="shrink-0"
-                              onClick={(event: MouseEvent) => {
-                                event.stopPropagation()
-                                startLocal(localSwapTarget(sidecar))
-                              }}
-                            >
-                              {localSwapLabel(sidecar)}
-                            </Button>
-                          )
-                        }
-
-                        return (
-                          <Popover
-                            open={store.localServer.confirmSwapKey === ServerConnection.key(sidecar)}
-                            onOpenChange={(open) =>
-                              setStore(
-                                "localServer",
-                                "confirmSwapKey",
-                                open ? ServerConnection.key(sidecar) : undefined,
-                              )
-                            }
-                            triggerAs={Button}
-                            triggerProps={{
-                              variant: "secondary",
-                              size: "small",
-                              class: "shrink-0",
-                              onClick: (event: MouseEvent) => event.stopPropagation(),
-                              onPointerDown: (event: PointerEvent) => event.stopPropagation(),
-                            }}
-                            trigger={localSwapLabel(sidecar)}
-                            placement="bottom-end"
-                            portal={false}
-                          >
-                            <div class="flex flex-col gap-3">
-                              <div class="text-13-medium text-text-strong">Use Windows instead?</div>
-                              <div class="text-12-regular text-text-weak">
-                                Restart OpenCode after switching the Local Server back to Windows.
-                              </div>
-                              <div class="flex items-center justify-end gap-2">
-                                <Button
-                                  variant="ghost"
-                                  size="small"
-                                  onClick={(event: MouseEvent) => {
-                                    event.stopPropagation()
-                                    setStore("localServer", "confirmSwapKey", undefined)
-                                  }}
-                                >
-                                  Cancel
-                                </Button>
-                                <Button
-                                  variant="secondary"
-                                  size="small"
-                                  onClick={(event: MouseEvent) => {
-                                    event.stopPropagation()
-                                    void swapLocalToWindows()
-                                  }}
-                                >
-                                  Use Windows
-                                </Button>
-                              </div>
-                            </div>
-                          </Popover>
-                        )
-                      })()}
-                    </Show>
-
                     <Show when={ServerConnection.key(current()) === key}>
                       <Icon name="check" class="h-6" />
                     </Show>
 
-                    <Show when={i.type === "http"}>
+                    <Show when={i.type === "http" || isWslSidecar}>
                       <DropdownMenu>
                         <DropdownMenu.Trigger
                           as={IconButton}
@@ -744,35 +635,46 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                         />
                         <DropdownMenu.Portal>
                           <DropdownMenu.Content class="mt-1">
-                            <DropdownMenu.Item
-                              onSelect={() => {
-                                if (i.type !== "http") return
-                                startEdit(i)
-                              }}
-                            >
-                              <DropdownMenu.ItemLabel>{language.t("dialog.server.menu.edit")}</DropdownMenu.ItemLabel>
-                            </DropdownMenu.Item>
-                            <Show when={canDefault() && defaultKey() !== key}>
+                            <Show when={i.type === "http"}>
+                              <DropdownMenu.Item
+                                onSelect={() => {
+                                  if (i.type !== "http") return
+                                  startEdit(i)
+                                }}
+                              >
+                                <DropdownMenu.ItemLabel>{language.t("dialog.server.menu.edit")}</DropdownMenu.ItemLabel>
+                              </DropdownMenu.Item>
+                            </Show>
+                            <Show when={isWslSidecar && store.status[key]?.healthy === false}>
+                              <DropdownMenu.Item onSelect={() => void handleRetryWsl(i)}>
+                                <DropdownMenu.ItemLabel>Retry start</DropdownMenu.ItemLabel>
+                              </DropdownMenu.Item>
+                            </Show>
+                            <Show when={i.type === "http" && canDefault() && defaultKey() !== key}>
                               <DropdownMenu.Item onSelect={() => setDefault(key)}>
                                 <DropdownMenu.ItemLabel>
                                   {language.t("dialog.server.menu.default")}
                                 </DropdownMenu.ItemLabel>
                               </DropdownMenu.Item>
                             </Show>
-                            <Show when={canDefault() && defaultKey() === key}>
+                            <Show when={i.type === "http" && canDefault() && defaultKey() === key}>
                               <DropdownMenu.Item onSelect={() => setDefault(null)}>
                                 <DropdownMenu.ItemLabel>
                                   {language.t("dialog.server.menu.defaultRemove")}
                                 </DropdownMenu.ItemLabel>
                               </DropdownMenu.Item>
                             </Show>
-                            <DropdownMenu.Separator />
-                            <DropdownMenu.Item
-                              onSelect={() => handleRemove(ServerConnection.key(i))}
-                              class="text-text-on-critical-base hover:bg-surface-critical-weak"
-                            >
-                              <DropdownMenu.ItemLabel>{language.t("dialog.server.menu.delete")}</DropdownMenu.ItemLabel>
-                            </DropdownMenu.Item>
+                            <Show when={i.type === "http" || isWslSidecar}>
+                              <DropdownMenu.Separator />
+                              <DropdownMenu.Item
+                                onSelect={() => (isWslSidecar ? void handleRemoveWsl(i) : handleRemove(key))}
+                                class="text-text-on-critical-base hover:bg-surface-critical-weak"
+                              >
+                                <DropdownMenu.ItemLabel>
+                                  {language.t("dialog.server.menu.delete")}
+                                </DropdownMenu.ItemLabel>
+                              </DropdownMenu.Item>
+                            </Show>
                           </DropdownMenu.Content>
                         </DropdownMenu.Portal>
                       </DropdownMenu>
@@ -786,18 +688,31 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
 
         <div class="px-5 pb-5">
           <Show
-            when={!isLocalMode() && isFormMode()}
+            when={!isAddWslMode() && isFormMode()}
             fallback={
-              <Show when={!isLocalMode()}>
-                <Button
-                  variant="secondary"
-                  icon="plus-small"
-                  size="large"
-                  onClick={startAdd}
-                  class="py-1.5 pl-1.5 pr-3 flex items-center gap-1.5"
-                >
-                  {language.t("dialog.server.add.button")}
-                </Button>
+              <Show when={!isAddWslMode()}>
+                <div class="flex items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    icon="plus-small"
+                    size="large"
+                    onClick={startAdd}
+                    class="py-1.5 pl-1.5 pr-3 flex items-center gap-1.5"
+                  >
+                    {language.t("dialog.server.add.button")}
+                  </Button>
+                  <Show when={canAddWsl()}>
+                    <Button
+                      variant="secondary"
+                      icon="plus-small"
+                      size="large"
+                      onClick={startAddWsl}
+                      class="py-1.5 pl-1.5 pr-3 flex items-center gap-1.5"
+                    >
+                      Add WSL
+                    </Button>
+                  </Show>
+                </div>
               </Show>
             }
           >
