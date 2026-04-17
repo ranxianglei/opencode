@@ -319,12 +319,20 @@ export const SortableWorkspace = (props: {
   })
   const slug = createMemo(() => base64Encode(props.directory))
   const sessions = createMemo(() => sortedRootSessions(workspaceStore, props.sortNow()))
-  const local = createMemo(() => props.directory === props.project.worktree)
+  // Guard against `props.project` being transiently undefined during a
+  // server-switch cascade. The parent renders
+  //   <For each={workspaces()}>{(dir) => <SortableWorkspace project={project()!} ... />}</For>
+  // where `project()` can flip to undefined while the enclosing <Show when={project()}>
+  // gate hasn't yet unmounted this child. Bootstrap's setStore can then fire
+  // these memos with stale props.
+  const local = createMemo(() => props.directory === (props.project?.worktree ?? ""))
   const active = createMemo(() => workspaceKey(props.ctx.currentDir()) === workspaceKey(props.directory))
   const workspaceValue = createMemo(() => {
     const branch = workspaceStore.vcs?.branch
     const name = branch ?? getFilename(props.directory)
-    return props.ctx.workspaceName(props.directory, props.project.id, branch) ?? name
+    const projectId = props.project?.id
+    if (!projectId) return name
+    return props.ctx.workspaceName(props.directory, projectId, branch) ?? name
   })
   const open = createMemo(() => props.ctx.workspaceExpanded(props.directory, local()))
   const boot = createMemo(() => open() || active())
@@ -423,7 +431,7 @@ export const SortableWorkspace = (props: {
                 openEditor={props.ctx.openEditor}
                 showResetWorkspaceDialog={props.ctx.showResetWorkspaceDialog}
                 showDeleteWorkspaceDialog={props.ctx.showDeleteWorkspaceDialog}
-                root={props.project.worktree}
+                root={props.project?.worktree ?? props.directory}
                 clearHoverProjectSoon={props.ctx.clearHoverProjectSoon}
                 navigateToNewSession={() => navigate(`/${slug()}/session`)}
               />
