@@ -29,8 +29,36 @@ window.addEventListener("error", (event) => {
 
 window.addEventListener("unhandledrejection", (event) => {
   const reason = event.reason
-  const stack = reason instanceof Error ? reason.stack : null
-  console.error("[renderer unhandled rejection]", stack ?? reason)
+  // Log as much as possible: stack for Errors, JSON for plain objects with
+  // a fallback to a tagged shape so we never end up with just
+  // "[object Object]" in main.log.
+  if (reason instanceof Error) {
+    console.error("[renderer unhandled rejection]", reason.stack ?? reason.message ?? String(reason))
+    return
+  }
+  let serialized: string
+  try {
+    serialized = JSON.stringify(
+      reason,
+      (_key, value) => {
+        if (value instanceof Error) {
+          return { __error: true, name: value.name, message: value.message, stack: value.stack }
+        }
+        return value
+      },
+      2,
+    )
+  } catch {
+    serialized = String(reason)
+  }
+  console.error(
+    "[renderer unhandled rejection]",
+    `type=${typeof reason}`,
+    `ctor=${reason?.constructor?.name ?? "null"}`,
+    `keys=${reason && typeof reason === "object" ? Object.keys(reason).join(",") : "n/a"}`,
+    "value:",
+    serialized,
+  )
 })
 
 import {
