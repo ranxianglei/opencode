@@ -15,6 +15,7 @@ import { useSDK } from "@/context/sdk"
 import { normalizeServerUrl, ServerConnection, useServer } from "@/context/server"
 import { useSync } from "@/context/sync"
 import { useCheckServerHealth, type ServerHealth } from "@/utils/server-health"
+import { setServerSwitching } from "@/utils/server-switch"
 
 const pollMs = 10_000
 
@@ -292,13 +293,26 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
                       aria-disabled={blocked()}
                       onClick={() => {
                         if (blocked()) return
-                        // Run navigate + setActive in the same tick so Solid
-                        // disposes the old subtree once instead of cascading
-                        // the route change disposal into the ServerKey remount.
-                        batch(() => {
-                          navigate("/")
-                          server.setActive(key)
-                        })
+                        // Paint a full-window splash BEFORE the heavy
+                        // ServerKey remount so the user gets visual
+                        // feedback during the multi-second synchronous
+                        // dispose cascade (xterm + file-tree + providers).
+                        // setTimeout(0) yields to the browser so the
+                        // splash lands on screen before the cascade
+                        // starts; a second setTimeout(0) after the batch
+                        // waits for the new subtree to paint, then
+                        // dismisses the splash.
+                        setServerSwitching(true)
+                        setTimeout(() => {
+                          try {
+                            batch(() => {
+                              navigate("/")
+                              server.setActive(key)
+                            })
+                          } finally {
+                            setTimeout(() => setServerSwitching(false), 0)
+                          }
+                        }, 0)
                       }}
                     >
                       <ServerHealthIndicator health={health[key]} />

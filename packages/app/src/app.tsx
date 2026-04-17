@@ -28,6 +28,7 @@ import {
   Suspense,
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
+import { serverSwitching } from "@/utils/server-switch"
 import { CommandProvider } from "@/context/command"
 import { CommentsProvider } from "@/context/comments"
 import { FileProvider } from "@/context/file"
@@ -305,6 +306,12 @@ export function AppInterface(props: {
   router?: Component<BaseRouterProps>
   disableHealthCheck?: boolean
 }) {
+  // ServerKey wraps the whole Router so that switching `server.key` throws
+  // away any session / pty state from the previous server. Preserving the
+  // route across servers doesn't work because session ids, pty ids, and
+  // most URL-addressable resources are server-scoped — you'd 404 on every
+  // fetch. The click handler that swaps servers also navigates back to "/"
+  // so the fresh MemoryRouter doesn't try to re-resolve a now-dead URL.
   return (
     <ServerProvider
       defaultServer={props.defaultServer}
@@ -312,6 +319,11 @@ export function AppInterface(props: {
       servers={props.servers}
     >
       <ConnectionGate disableHealthCheck={props.disableHealthCheck}>
+        <Show when={serverSwitching()}>
+          <div class="fixed inset-0 z-[2147483647] bg-background-base flex flex-col items-center justify-center pointer-events-auto">
+            <Splash class="w-16 h-20 opacity-50 animate-pulse" />
+          </div>
+        </Show>
         <ServerKey>
           <GlobalSDKProvider>
             <GlobalSyncProvider>
