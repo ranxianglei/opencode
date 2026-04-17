@@ -121,6 +121,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
     if (!item) return
     await stopServerInternal(id)
     setRuntime(id, { kind: "starting" })
+    mainLogger?.log("wsl sidecar starting", { id, distro: item.config.distro })
     try {
       const sidecar = await spawnSidecar(item.config.distro)
       sidecars.set(id, sidecar)

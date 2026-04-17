@@ -5,7 +5,7 @@ import { app } from "electron"
 import { DEFAULT_SERVER_URL_KEY } from "./constants"
 import { getUserShell, loadShellEnv } from "./shell-env"
 import { getStore } from "./store"
-import { type WslCommandLine, resolveWslOpencode, wslArgs } from "./wsl"
+import { checkWslDistroFirstRun, type WslCommandLine, resolveWslOpencode, wslArgs } from "./wsl"
 
 export type HealthCheck = { wait: Promise<void> }
 
@@ -83,6 +83,23 @@ export async function spawnWslSidecar(
   distro: string,
   opts: { onLine?: (line: WslCommandLine) => void; healthTimeoutMs?: number } = {},
 ): Promise<WslSidecar> {
+  // Gate on the registry state BEFORE any wsl.exe invocation. If the
+  // distro still has DefaultUid=0 it means the interactive first-run
+  // "Create a default UNIX user account" prompt never completed, and
+  // every wsl.exe -d <distro> ... call will silently block on stdin
+  // forever (we verified: Ubuntu-24.04 hangs on both -- echo and
+  // --user root -- echo in this state). Fail fast with a clear message
+  // so the controller can surface it to the user.
+  const firstRun = await checkWslDistroFirstRun(distro)
+  if (firstRun.status === "not-installed") {
+    throw new Error(`WSL distro ${distro} is not installed`)
+  }
+  if (firstRun.status === "needs-first-run") {
+    throw new Error(
+      `WSL distro ${distro} has not completed first-run setup. Open a terminal and run 'wsl -d ${distro}' to create a default UNIX user, then retry.`,
+    )
+  }
+
   const opencode = await resolveWslOpencode(distro)
   if (!opencode) throw new Error(`OpenCode is not installed in ${distro}`)
 
