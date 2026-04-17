@@ -8,7 +8,7 @@ import { List } from "@opencode-ai/ui/list"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { useMutation } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
-import { createEffect, createMemo, createResource, onCleanup, Show } from "solid-js"
+import { batch, createEffect, createMemo, createResource, onCleanup, Show } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { DialogWslServer } from "@/components/dialog-wsl-server"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
@@ -364,8 +364,10 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
       props.onNavigateHome?.()
       return
     }
-    props.onNavigateHome?.()
-    queueMicrotask(() => server.setActive(ServerConnection.key(conn)))
+    batch(() => {
+      props.onNavigateHome?.()
+      server.setActive(ServerConnection.key(conn))
+    })
   }
 
   const handleAddChange = (value: string) => {

@@ -6,7 +6,7 @@ import { Tabs } from "@opencode-ai/ui/tabs"
 import { useMutation } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
 import { useNavigate } from "@solidjs/router"
-import { type Accessor, createEffect, createMemo, For, type JSXElement, onCleanup, Show } from "solid-js"
+import { type Accessor, batch, createEffect, createMemo, For, type JSXElement, onCleanup, Show } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
 import { useLanguage } from "@/context/language"
@@ -292,8 +292,13 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
                       aria-disabled={blocked()}
                       onClick={() => {
                         if (blocked()) return
-                        navigate("/")
-                        queueMicrotask(() => server.setActive(key))
+                        // Run navigate + setActive in the same tick so Solid
+                        // disposes the old subtree once instead of cascading
+                        // the route change disposal into the ServerKey remount.
+                        batch(() => {
+                          navigate("/")
+                          server.setActive(key)
+                        })
                       }}
                     >
                       <ServerHealthIndicator health={health[key]} />

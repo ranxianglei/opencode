@@ -1,5 +1,11 @@
 // @refresh reload
 
+// V8's default Error.stackTraceLimit truncates at 10 frames, which is exactly
+// the depth of the recursive cleanNode crash — the real trigger (our code
+// calling dispose, or a store update racing disposal) is beyond that. Raise
+// it so stacks contain the origin frame.
+Error.stackTraceLimit = 200
+
 // Install global error listeners before any other module runs so that
 // uncaught errors and rejected promises reach the main process with their
 // full stacks intact. Electron's `console-message` event only forwards the
