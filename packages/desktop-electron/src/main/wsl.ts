@@ -18,9 +18,17 @@ type RunWslOptions = {
   signal?: AbortSignal
 }
 
+// `--user root` bypasses the distro's default-user requirement. A freshly
+// installed WSL distro (Ubuntu-24.04 in particular) prompts interactively
+// for a username/password on its first invocation; when spawned with
+// piped stdio that prompt blocks forever or silently reads garbage,
+// leaving the sidecar hanging and the server unhealthy. Running as root
+// sidesteps the entire first-run setup flow — opencode only needs an
+// HTTP listener in the distro, not a per-user environment, so root is
+// a safe default for the sidecar process.
 export function wslArgs(args: string[], distro?: string | null) {
-  if (distro) return ["-d", distro, "--", ...args]
-  return ["--", ...args]
+  if (distro) return ["-d", distro, "--user", "root", "--", ...args]
+  return ["--user", "root", "--", ...args]
 }
 
 export function runWsl(args: string[], opts: RunWslOptions = {}) {
