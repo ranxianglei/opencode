@@ -325,17 +325,13 @@ function wireMenu() {
       void checkForUpdates(true)
     },
     reload: () => mainWindow?.reload(),
-    relaunch: () => {
-      killSidecar()
-      wslServers.stopAll()
-      app.relaunch()
-      app.exit(0)
-    },
+    relaunch: () => relaunchApp(),
   })
 }
 
 registerIpcHandlers({
   killSidecar: () => killSidecar(),
+  relaunch: () => relaunchApp(),
   awaitInitialization: async (sendStep) => {
     sendStep(initStep)
     const listener = (step: InitStep) => sendStep(step)
@@ -384,6 +380,15 @@ function killSidecar() {
   if (!server) return
   server.stop()
   server = null
+}
+
+function relaunchApp() {
+  // app.exit() skips before-quit / will-quit, so relaunch callers must
+  // explicitly stop sidecars here rather than relying on process hooks.
+  killSidecar()
+  wslServers.stopAll()
+  app.relaunch()
+  app.exit(0)
 }
 
 function ensureLoopbackNoProxy() {

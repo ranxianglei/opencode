@@ -22,6 +22,7 @@ const pickerFilters = (ext?: string[]) => {
 
 type Deps = {
   killSidecar: () => void
+  relaunch: () => void
   awaitInitialization: (sendStep: (step: InitStep) => void) => Promise<ServerReadyData>
   getWslServersState: () => Promise<WslServersState> | WslServersState
   onWslServersEvent: (listener: (event: WslServersEvent) => void) => () => void
@@ -227,8 +228,7 @@ export function registerIpcHandlers(deps: Deps) {
   })
 
   ipcMain.on("relaunch", () => {
-    app.relaunch()
-    app.exit(0)
+    deps.relaunch()
   })
 
   ipcMain.handle("get-zoom-factor", (event: IpcMainInvokeEvent) => event.sender.getZoomFactor())
