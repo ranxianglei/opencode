@@ -1,6 +1,7 @@
 import { Dialog as Kobalte } from "@kobalte/core/dialog"
-import { ComponentProps, JSXElement, Match, ParentProps, Show, Switch } from "solid-js"
+import { ComponentProps, createEffect, JSXElement, Match, ParentProps, Show, Switch, useContext } from "solid-js"
 import { useI18n } from "../context/i18n"
+import { DialogContext } from "../context/dialog"
 import { IconButton } from "./icon-button"
 
 export interface DialogProps extends ParentProps {
@@ -12,11 +13,19 @@ export interface DialogProps extends ParentProps {
   classList?: ComponentProps<"div">["classList"]
   fit?: boolean
   transition?: boolean
+  // When `false`, clicking the overlay or outside the dialog will not dismiss it.
+  // Default is `true`.
   dismissOutside?: boolean
 }
 
 export function Dialog(props: DialogProps) {
   const i18n = useI18n()
+  const dialogCtx = useContext(DialogContext)
+  createEffect(() => {
+    if (!dialogCtx) return
+    if (props.dismissOutside === undefined) return
+    dialogCtx.active?.setDismissOutside(props.dismissOutside)
+  })
   return (
     <div
       data-component="dialog"
@@ -31,12 +40,6 @@ export function Dialog(props: DialogProps) {
           classList={{
             ...props.classList,
             [props.class ?? ""]: !!props.class,
-          }}
-          onInteractOutside={(e) => {
-            if (props.dismissOutside === false) e.preventDefault()
-          }}
-          onPointerDownOutside={(e) => {
-            if (props.dismissOutside === false) e.preventDefault()
           }}
           onOpenAutoFocus={(e) => {
             const target = e.currentTarget as HTMLElement | null

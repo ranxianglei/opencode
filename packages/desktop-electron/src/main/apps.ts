@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process"
 import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { dirname, extname, join } from "node:path"
-import { wslArgs } from "./wsl"
+import { resolveWslHome, runWslInDistro } from "./wsl"
 
 export function checkAppExists(appName: string): boolean {
   if (process.platform === "win32") return true
@@ -14,20 +14,17 @@ export function resolveAppPath(appName: string): string | null {
   return resolveWindowsAppPath(appName)
 }
 
-export function wslPath(path: string, mode: "windows" | "linux" | null, distro?: string | null): string {
+export async function wslPath(path: string, mode: "windows" | "linux" | null, distro?: string | null): Promise<string> {
   if (process.platform !== "win32") return path
 
   const flag = mode === "windows" ? "-w" : "-u"
   try {
-    if (path.startsWith("~")) {
-      const suffix = path.slice(1)
-      const cmd = `wslpath ${flag} "$HOME${suffix.replace(/"/g, '\\"')}"`
-      const output = execFileSync("wsl", wslArgs(["sh", "-lc", cmd], distro))
-      return output.toString().trim()
+    const resolved = path.startsWith("~") ? `${distro ? await resolveWslHome(distro) : "/root"}${path.slice(1)}` : path
+    const output = await runWslInDistro(["wslpath", flag, resolved], distro)
+    if (output.code !== 0) {
+      throw new Error(output.stderr || output.stdout || `wslpath exited with code ${output.code}`)
     }
-
-    const output = execFileSync("wsl", wslArgs(["wslpath", flag, path], distro))
-    return output.toString().trim()
+    return output.stdout.trim()
   } catch (error) {
     throw new Error(`Failed to run wslpath: ${String(error)}`, { cause: error })
   }

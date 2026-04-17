@@ -256,9 +256,23 @@ function ConnectionError(props: { onRetry?: () => void; onServerSelected?: (key:
             size="large"
             class="mt-4"
             onClick={() => {
-              void import("@/components/dialog-select-server").then((x) => {
-                dialog.show(() => <x.DialogSelectServer />)
-              })
+              void import("@/components/dialog-select-server")
+                .then((x) => {
+                  dialog.show(() => (
+                    <x.DialogSelectServer
+                      onNavigateHome={() => {
+                        // We're above the Router here so useNavigate() isn't available.
+                        // Update the browser URL directly; after server.setActive fires
+                        // ServerKey remounts the Router which picks up "/" on init.
+                        // Harmless under MemoryRouter (Electron), which restarts at "/".
+                        if (typeof window !== "undefined" && window.history?.replaceState) {
+                          window.history.replaceState(null, "", "/")
+                        }
+                      }}
+                    />
+                  ))
+                })
+                .catch((err) => console.error("Failed to load server dialog", err))
             }}
           >
             Manage servers

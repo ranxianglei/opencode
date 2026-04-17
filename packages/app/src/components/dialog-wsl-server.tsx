@@ -2,7 +2,7 @@ import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Spinner } from "@opencode-ai/ui/spinner"
 import { showToast } from "@opencode-ai/ui/toast"
-import { createEffect, createMemo, For, Match, on, onCleanup, Show, Switch } from "solid-js"
+import { createEffect, createMemo, For, Match, onCleanup, Show, Switch } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { useLanguage } from "@/context/language"
 import type { WslServerStep, WslServersState } from "@/context/platform"
@@ -125,13 +125,10 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
     if (!distroReady()) return "distro"
     return "opencode"
   })
+  // activeStep falls back to recommendedStep when the user hasn't picked one.
+  // Once the user clicks a step tab we respect their choice rather than snapping
+  // them back when a probe result updates recommendedStep.
   const activeStep = createMemo(() => store.step ?? recommendedStep())
-
-  createEffect(
-    on(recommendedStep, (next) => {
-      setStore("step", next)
-    }),
-  )
 
   const autoProbe = createMemo(() => {
     const state = current()
@@ -157,8 +154,19 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
   createEffect(() => {
     const probe = autoProbe()
     if (!probe || probe.key === lastAutoProbe) return
-    lastAutoProbe = probe.key
-    void run(probe.run)
+    const key = probe.key
+    lastAutoProbe = key
+    void (async () => {
+      try {
+        await probe.run()
+      } catch (err) {
+        // Allow the same probe to run again when reactive inputs next change
+        // (e.g. user reselects a distro). Without this the user would be stuck
+        // on a transient wsl.exe failure until they pick a different distro.
+        if (lastAutoProbe === key) lastAutoProbe = null
+        requestError(language, err)
+      }
+    })()
   })
 
   createEffect(() => {

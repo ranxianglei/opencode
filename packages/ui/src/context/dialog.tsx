@@ -23,9 +23,13 @@ type Active = {
   owner: Owner
   onClose?: () => void
   setClosing: (closing: boolean) => void
+  dismissOutside: () => boolean
+  setDismissOutside: (value: boolean) => void
 }
 
 const Context = createContext<ReturnType<typeof init>>()
+
+export const DialogContext = Context
 
 function init() {
   const [active, setActive] = createSignal<Active | undefined>()
@@ -89,12 +93,17 @@ function init() {
     const id = Math.random().toString(36).slice(2)
     let dispose: (() => void) | undefined
     let setClosing: ((closing: boolean) => void) | undefined
+    let setDismissOutsideSignal: ((value: boolean) => void) | undefined
+    let dismissOutsideAccessor: (() => boolean) | undefined
 
     const node = runWithOwner(owner, () =>
       createRoot((d: () => void) => {
         dispose = d
         const [closing, setClosingSignal] = createSignal(false)
         setClosing = setClosingSignal
+        const [dismissOutside, setDismissOutside] = createSignal(true)
+        dismissOutsideAccessor = dismissOutside
+        setDismissOutsideSignal = setDismissOutside
         return (
           <Kobalte
             modal
@@ -105,7 +114,12 @@ function init() {
             }}
           >
             <Kobalte.Portal>
-              <Kobalte.Overlay data-component="dialog-overlay" />
+              <Kobalte.Overlay
+                data-component="dialog-overlay"
+                onClick={() => {
+                  if (dismissOutside()) close()
+                }}
+              />
               {element()}
             </Kobalte.Portal>
           </Kobalte>
@@ -113,9 +127,18 @@ function init() {
       }),
     )
 
-    if (!dispose || !setClosing) return
+    if (!dispose || !setClosing || !dismissOutsideAccessor || !setDismissOutsideSignal) return
 
-    setActive({ id, node, dispose, owner, onClose, setClosing })
+    setActive({
+      id,
+      node,
+      dispose,
+      owner,
+      onClose,
+      setClosing,
+      dismissOutside: dismissOutsideAccessor,
+      setDismissOutside: setDismissOutsideSignal,
+    })
   }
 
   return {
@@ -158,6 +181,9 @@ export function useDialog() {
     },
     close() {
       ctx.close()
+    },
+    setDismissOutside(value: boolean) {
+      ctx.active?.setDismissOutside(value)
     },
   }
 }

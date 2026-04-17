@@ -56,23 +56,20 @@ const pendingDeepLinks: string[] = []
 
 const serverReady = defer<ServerReadyData>()
 void serverReady.promise.catch(() => undefined)
-const wslServers = (() => {
-  const logger = initLogging()
-  return createWslServersController(
-    app.getVersion(),
-    async (distro) => {
-      logger.log("spawning wsl sidecar", { distro })
-      return spawnWslSidecar(distro, {
-        onLine: (line) => logger.log("wsl sidecar", { distro, stream: line.stream, text: line.text }),
-      })
-    },
-    {
-      log: (message, meta) => logger.log(message, meta),
-      error: (message, meta) => logger.error(message, meta),
-    },
-  )
-})()
 const logger = initLogging()
+const wslServers = createWslServersController(
+  app.getVersion(),
+  async (distro) => {
+    logger.log("spawning wsl sidecar", { distro })
+    return spawnWslSidecar(distro, {
+      onLine: (line) => logger.log("wsl sidecar", { distro, stream: line.stream, text: line.text }),
+    })
+  },
+  {
+    log: (message, meta) => logger.log(message, meta),
+    error: (message, meta) => logger.error(message, meta),
+  },
+)
 
 logger.log("app starting", {
   version: app.getVersion(),

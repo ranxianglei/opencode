@@ -57,6 +57,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
   let state: WslServersState = initialState()
   const listeners = new Set<(event: WslServersEvent) => void>()
   const sidecars = new Map<string, RunningSidecar>()
+  const startAttempts = new Map<string, number>()
   let jobAbort: AbortController | undefined
 
   const emit = () => {
@@ -116,14 +117,38 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
     updateServer(id, (item) => ({ ...item, runtime }))
   }
 
+  const nextStartAttempt = (id: string) => {
+    const next = (startAttempts.get(id) ?? 0) + 1
+    startAttempts.set(id, next)
+    return next
+  }
+
+  const invalidateStartAttempt = (id: string) => {
+    startAttempts.set(id, (startAttempts.get(id) ?? 0) + 1)
+  }
+
+  const isCurrentStartAttempt = (id: string, attempt: number) => {
+    return startAttempts.get(id) === attempt && state.servers.some((item) => item.config.id === id)
+  }
+
   const startServer = async (id: string) => {
     const item = state.servers.find((x) => x.config.id === id)
     if (!item) return
+    const attempt = nextStartAttempt(id)
     await stopServerInternal(id)
+    if (!isCurrentStartAttempt(id, attempt)) return
     setRuntime(id, { kind: "starting" })
     mainLogger?.log("wsl sidecar starting", { id, distro: item.config.distro })
     try {
       const sidecar = await spawnSidecar(item.config.distro)
+      if (!isCurrentStartAttempt(id, attempt)) {
+        try {
+          sidecar.listener.stop()
+        } catch {
+          // ignore stop errors for stale sidecars
+        }
+        return
+      }
       sidecars.set(id, sidecar)
       setRuntime(id, {
         kind: "ready",
@@ -134,6 +159,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
       mainLogger?.log("wsl sidecar ready", { id, distro: item.config.distro, url: sidecar.url })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      if (!isCurrentStartAttempt(id, attempt)) return
       setRuntime(id, { kind: "failed", message })
       // Without this, an Ubuntu-style silent failure leaves no trace in
       // main.log — the controller captures the message in its state but
@@ -327,6 +353,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
     },
 
     async removeServer(id: string) {
+      invalidateStartAttempt(id)
       await stopServerInternal(id)
       const remaining = readPersistedServers().filter((item) => item.id !== id)
       persistServers(remaining)
@@ -336,6 +363,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
     startServer,
 
     async stopServer(id: string) {
+      invalidateStartAttempt(id)
       await stopServerInternal(id)
       setRuntime(id, { kind: "stopped" })
     },
@@ -350,6 +378,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
     },
 
     stopAll() {
+      for (const item of state.servers) invalidateStartAttempt(item.config.id)
       for (const [id] of sidecars) {
         const existing = sidecars.get(id)
         try {

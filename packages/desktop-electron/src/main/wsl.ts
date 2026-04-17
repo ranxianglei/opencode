@@ -353,11 +353,55 @@ export async function probeWslDistro(name: string, opts?: RunWslOptions): Promis
   }
 }
 
+async function readWslDefaultUser(distro: string, opts?: RunWslOptions) {
+  const entry = (await readWslDistrosFromRegistry(opts)).find((item) => item.name === distro)
+  if (!entry || entry.defaultUid === 0) return null
+
+  const passwd = firstLine(
+    (
+      await runWslSh(
+        [
+          "if command -v getent >/dev/null 2>&1; then",
+          `  getent passwd ${entry.defaultUid}`,
+          "else",
+          `  awk -F: '$3 == ${entry.defaultUid} { print; exit }' /etc/passwd`,
+          "fi",
+        ].join("\n"),
+        distro,
+        opts,
+      )
+    ).stdout,
+  )
+  if (!passwd) return null
+
+  const parts = passwd.split(":")
+  const username = parts[0]?.trim() ?? ""
+  const home = parts[5]?.trim() ?? ""
+  if (!home) return null
+  return { username: username || null, home }
+}
+
+export async function resolveWslHome(distro: string, opts?: RunWslOptions) {
+  return (await readWslDefaultUser(distro, opts))?.home ?? "/root"
+}
+
+function opencodeCandidate(path: string) {
+  return `if [ -x ${shellEscape(path)} ]; then printf "%s\\n" ${shellEscape(path)}; fi`
+}
+
 export async function resolveWslOpencode(distro: string, opts?: RunWslOptions) {
   const command = firstLine((await runWslSh("command -v opencode 2>/dev/null || true", distro, opts)).stdout)
   if (command && !command.startsWith("/mnt/")) return command
 
+  const home = await resolveWslHome(distro, opts)
   for (const candidate of [
+    ...(home !== "/root"
+      ? [
+          opencodeCandidate(`${home}/.local/bin/opencode`),
+          opencodeCandidate(`${home}/bin/opencode`),
+          opencodeCandidate(`${home}/.opencode/bin/opencode`),
+        ]
+      : []),
     'if [ -x "${XDG_BIN_DIR:-$HOME/.local/bin}/opencode" ]; then printf "%s\\n" "${XDG_BIN_DIR:-$HOME/.local/bin}/opencode"; fi',
     'if [ -x "$HOME/bin/opencode" ]; then printf "%s\\n" "$HOME/bin/opencode"; fi',
     'if [ -x "$HOME/.opencode/bin/opencode" ]; then printf "%s\\n" "$HOME/.opencode/bin/opencode"; fi',
