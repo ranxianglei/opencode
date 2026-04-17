@@ -203,14 +203,13 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
     const check = (conn: ServerConnection.Any) =>
       checkServerHealth(conn.http).then((x) => {
         if (!x.healthy) {
-          // Loud: makes it trivial to see why a server shows red in the
-          // status popover / switcher. The dot only goes red when this
-          // returns false; otherwise undefined (gray) is emitted first.
-          console.warn("[server health] unhealthy", {
-            key: ServerConnection.key(conn),
-            url: conn.http.url,
-            hasAuth: !!(conn.http.username || conn.http.password),
-          })
+          // Electron's console-message bridge only preserves the first
+          // console argument, so pre-stringify everything into one string.
+          console.warn(
+            `[server health] unhealthy key=${ServerConnection.key(conn)} url=${conn.http.url} hasAuth=${!!(
+              conn.http.username || conn.http.password
+            )}`,
+          )
         }
         return x.healthy
       })
@@ -224,10 +223,7 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
         return
       }
       setState("healthy", undefined)
-      console.log("[server health] start polling", {
-        key: ServerConnection.key(current_),
-        url: current_.http.url,
-      })
+      console.log(`[server health] start polling key=${ServerConnection.key(current_)} url=${current_.http.url}`)
       onCleanup(startHealthPolling(current_))
     })
 

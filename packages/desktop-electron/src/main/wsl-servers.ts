@@ -41,13 +41,19 @@ type RunningSidecar = {
 
 type SpawnSidecar = (distro: string) => Promise<RunningSidecar>
 
+type ControllerLogger = {
+  log: (message: string, meta?: unknown) => void
+  error: (message: string, meta?: unknown) => void
+}
+
 export type WslServersController = ReturnType<typeof createWslServersController>
 
 export function wslServerIdForDistro(distro: string) {
   return `wsl:${distro}`
 }
 
-export function createWslServersController(appVersion: string, spawnSidecar: SpawnSidecar) {
+export function createWslServersController(appVersion: string, spawnSidecar: SpawnSidecar, logger?: ControllerLogger) {
+  const mainLogger: ControllerLogger | undefined = logger
   let state: WslServersState = initialState()
   const listeners = new Set<(event: WslServersEvent) => void>()
   const sidecars = new Map<string, RunningSidecar>()
@@ -124,11 +130,14 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
         username: sidecar.username,
         password: sidecar.password,
       })
+      mainLogger?.log("wsl sidecar ready", { id, distro: item.config.distro, url: sidecar.url })
     } catch (error) {
-      setRuntime(id, {
-        kind: "failed",
-        message: error instanceof Error ? error.message : String(error),
-      })
+      const message = error instanceof Error ? error.message : String(error)
+      setRuntime(id, { kind: "failed", message })
+      // Without this, an Ubuntu-style silent failure leaves no trace in
+      // main.log — the controller captures the message in its state but
+      // nothing surfaces unless the user opens the WSL servers dialog.
+      mainLogger?.error("wsl sidecar failed to start", { id, distro: item.config.distro, message })
     }
   }
 
