@@ -1,17 +1,8 @@
 // @refresh reload
 
-// V8's default Error.stackTraceLimit truncates at 10 frames, which is exactly
-// the depth of the recursive cleanNode crash — the real trigger (our code
-// calling dispose, or a store update racing disposal) is beyond that. Raise
-// it so stacks contain the origin frame.
+// V8's default Error.stackTraceLimit truncates at 10 frames; raise it so
+// reported errors come with a useful frame budget.
 Error.stackTraceLimit = 200
-
-// Install the solid-js owner/cleanup instrumentation before anything else
-// touches solid-js so every created owner gets accessor-based traps on its
-// `owned` and `cleanups`. This logs the exact cleanup-cascade that nulls an
-// owner's `owned` mid-iteration — the root cause of the recursive cleanNode
-// crash. Debug-only; remove once the offending cleanup is identified.
-import "./solid-instrument"
 
 // Install global error listeners before any other module runs so that
 // uncaught errors and rejected promises reach the main process with their
