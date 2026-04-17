@@ -364,10 +364,15 @@ export const { use: useTerminal, provider: TerminalProvider } = createSimpleCont
     onCleanup(() => caches.delete(cache))
 
     const disposeAll = () => {
-      for (const entry of cache.values()) {
-        entry.dispose()
-      }
+      // Snapshot disposers, then defer them to a microtask. When this runs
+      // from onCleanup during a parent remount (e.g. switching servers),
+      // calling dispose() synchronously starts a nested cleanNode cascade on
+      // a sibling root while the outer cascade is mid-traversal, corrupting
+      // solid-js's graph walk state and throwing `Cannot read properties of
+      // null (reading '1')` at chunk-*.js:992.
+      const pending = Array.from(cache.values(), (entry) => entry.dispose)
       cache.clear()
+      if (pending.length) queueMicrotask(() => pending.forEach((d) => d()))
     }
 
     onCleanup(disposeAll)
