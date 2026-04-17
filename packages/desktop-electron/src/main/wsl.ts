@@ -176,32 +176,51 @@ const ALWAYS_ROOT_DISTROS = new Set(["docker-desktop", "docker-desktop-data"])
 // wsl.exe, so it is safe to call when wsl.exe itself is wedged.
 // DefaultUid === 0 on a user-oriented distro means the first-run
 // "Create a default UNIX user account" step never completed.
+//
+// Uses a `reg query` fallback strategy because some hosts (e.g. Electron
+// spawning PowerShell with certain user profiles) return nothing from the
+// PowerShell registry provider; parsing `reg query` output is ugly but
+// native Windows and always available.
 export async function readWslDistrosFromRegistry(opts?: RunWslOptions): Promise<WslRegistryDistro[]> {
-  const script = [
-    "$ErrorActionPreference = 'Stop'",
-    "$out = @()",
-    "Get-ChildItem 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss' -ErrorAction SilentlyContinue | ForEach-Object {",
-    "  $name = $_.GetValue('DistributionName')",
-    "  if (-not $name) { return }",
-    "  $out += [PSCustomObject]@{",
-    "    name       = $name",
-    "    defaultUid = [int]$_.GetValue('DefaultUid', 0)",
-    "    state      = [int]$_.GetValue('State', 0)",
-    "    version    = [int]$_.GetValue('Version', 0)",
-    "  }",
-    "}",
-    "$out | ConvertTo-Json -Compress",
-  ].join("; ")
-  const result = await runPowerShell(script, opts)
-  if (result.code !== 0) return []
-  const text = result.stdout.trim()
-  if (!text) return []
-  try {
-    const parsed = JSON.parse(text) as WslRegistryDistro | WslRegistryDistro[]
-    return Array.isArray(parsed) ? parsed : [parsed]
-  } catch {
+  // `reg query` prints each subkey's values in a stable format:
+  //
+  //   HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Lxss\{guid}
+  //       DistributionName    REG_SZ    Ubuntu-24.04
+  //       DefaultUid          REG_DWORD 0x0
+  //       State               REG_DWORD 0x1
+  //       Version             REG_DWORD 0x2
+  //       ...
+  const result = await runCommand(
+    "reg.exe",
+    ["query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss", "/s"],
+    opts,
+  )
+  const stdout = result.stdout
+  if (result.code !== 0 || !stdout) {
+    ;(opts?.onLine ?? (() => undefined))({
+      stream: "stderr",
+      text: `reg query failed code=${result.code} stderr=${result.stderr.slice(0, 200)}`,
+    })
     return []
   }
+  const blocks = stdout.split(/\r?\n\r?\n/)
+  const out: WslRegistryDistro[] = []
+  for (const block of blocks) {
+    const header = block.match(/^(HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss\\\{[^}]+\})/i)
+    if (!header) continue
+    const name = block.match(/^\s+DistributionName\s+REG_SZ\s+(.+?)\s*$/m)?.[1]
+    if (!name) continue
+    const uidHex = block.match(/^\s+DefaultUid\s+REG_DWORD\s+0x([0-9a-f]+)\s*$/im)?.[1] ?? "0"
+    const stateHex = block.match(/^\s+State\s+REG_DWORD\s+0x([0-9a-f]+)\s*$/im)?.[1] ?? "0"
+    const versionHex = block.match(/^\s+Version\s+REG_DWORD\s+0x([0-9a-f]+)\s*$/im)?.[1] ?? "0"
+    out.push({
+      name,
+      defaultUid: Number.parseInt(uidHex, 16),
+      state: Number.parseInt(stateHex, 16),
+      version: Number.parseInt(versionHex, 16),
+    })
+  }
+  return out
 }
 
 export type WslFirstRunCheck =
