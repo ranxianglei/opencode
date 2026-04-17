@@ -294,6 +294,18 @@ function wireWindowDiagnostics(win: BrowserWindow, label: string) {
     })
   })
 
+  // DevTools accelerators on Windows/Linux where the menu isn't created.
+  win.webContents.on("before-input-event", (_event, input) => {
+    if (input.type !== "keyDown") return
+    const key = input.key
+    const toggle =
+      key === "F12" ||
+      (input.control && input.shift && (key === "I" || key === "i")) ||
+      (input.meta && input.alt && (key === "I" || key === "i"))
+    if (!toggle) return
+    win.webContents.toggleDevTools()
+  })
+
   win.on("unresponsive", () => {
     logger.error(`${label} window became unresponsive`)
   })
