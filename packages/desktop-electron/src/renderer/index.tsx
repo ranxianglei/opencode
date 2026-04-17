@@ -1,5 +1,25 @@
 // @refresh reload
 
+// Install global error listeners before any other module runs so that
+// uncaught errors and rejected promises reach the main process with their
+// full stacks intact. Electron's `console-message` event only forwards the
+// rethrow site, so without these we lose the originating frame.
+window.addEventListener("error", (event) => {
+  const err = event.error
+  const stack = err instanceof Error ? err.stack : null
+  console.error(
+    "[renderer uncaught]",
+    stack ?? event.message,
+    stack ? "" : `${event.filename}:${event.lineno}:${event.colno}`,
+  )
+})
+
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event.reason
+  const stack = reason instanceof Error ? reason.stack : null
+  console.error("[renderer unhandled rejection]", stack ?? reason)
+})
+
 import {
   ACCEPTED_FILE_EXTENSIONS,
   ACCEPTED_FILE_TYPES,

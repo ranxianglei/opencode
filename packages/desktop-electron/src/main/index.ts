@@ -258,16 +258,20 @@ async function initialize() {
 
 function wireWindowDiagnostics(win: BrowserWindow, label: string) {
   win.webContents.on("console-message", (_event, level, message, line, sourceId) => {
-    const payload = { level, message, line, sourceId }
+    // Render `message` as a block so multi-line stack traces survive; the
+    // previous shape stuffed the message into a JSON object which escaped
+    // `\n` and made stacks unreadable.
+    const location = sourceId ? ` [${sourceId}:${line}]` : ""
+    const text = `${label} renderer${location}\n${message}`
     if (level >= 3) {
-      logger.error(`${label} renderer console`, payload)
+      logger.error(text)
       return
     }
     if (level >= 2) {
-      logger.warn(`${label} renderer console`, payload)
+      logger.warn(text)
       return
     }
-    logger.log(`${label} renderer console`, payload)
+    logger.log(text)
   })
 
   win.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
