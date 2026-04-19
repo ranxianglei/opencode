@@ -23,7 +23,7 @@ function parseProgressPercent(text: string) {
 }
 
 interface DialogWslServerProps {
-  onAdded?: () => void
+  onAdded?: (distro: string) => void | Promise<void>
 }
 
 export function DialogWslServer(props: DialogWslServerProps = {}) {
@@ -272,7 +272,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
 
   const selectDistro = (name: string) => {
     setStore("selectedDistro", name)
-    setStore("step", "distro")
+    setStore("step", undefined)
   }
 
   const finish = async () => {
@@ -283,8 +283,11 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
     setStore("adding", true)
     try {
       await api.addServer(distro)
-      props.onAdded?.()
-      dialog.close()
+      if (props.onAdded) {
+        await props.onAdded(distro)
+      } else {
+        dialog.close()
+      }
     } catch (err) {
       requestError(language, err)
     } finally {
@@ -356,6 +359,11 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                   </Button>
                 </div>
               </Show>
+              <div class="flex items-center justify-end">
+                <Button variant="secondary" size="large" disabled={busy() || !wslReady()} onClick={() => setStore("step", "distro")}>
+                  Next
+                </Button>
+              </div>
             </div>
           </Match>
 
@@ -386,11 +394,9 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                         onClick={() => selectDistro(item.name)}
                       >
                         <div class="text-13-medium text-text-strong">{item.name}</div>
-                        <div class="text-12-regular text-text-weak">
-                          {[item.isDefault ? "default" : null, item.state, item.version ? `WSL ${item.version}` : null]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </div>
+                        <Show when={item.isDefault}>
+                          <div class="text-12-regular text-text-weak">Default</div>
+                        </Show>
                       </button>
                     )}
                   </For>
@@ -423,7 +429,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                   <div
                     role="radiogroup"
                     aria-label="Install distro"
-                    class="max-h-44 overflow-y-auto rounded-md bg-background-base"
+                    class="max-h-52 overflow-y-auto rounded-md bg-background-base"
                   >
                     <For each={installableDistros()}>
                       {(item) => {
@@ -434,7 +440,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                             role="radio"
                             aria-checked={selected()}
                             disabled={busy()}
-                            class="w-full px-3 py-2 flex items-start gap-3 text-left border-b border-border-weak-base last:border-b-0 transition-colors"
+                            class="w-full px-3 py-2 flex items-center gap-3 text-left border-b border-border-weak-base last:border-b-0 transition-colors"
                             classList={{
                               "bg-surface-raised-base": selected(),
                               "hover:bg-surface-base": !selected(),
@@ -447,12 +453,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                             >
                               <div class="h-2 w-2 rounded-full bg-text-strong" classList={{ hidden: !selected() }} />
                             </div>
-                            <div class="min-w-0 flex-1">
-                              <div class="text-13-medium text-text-strong break-words">{item.label}</div>
-                              <Show when={item.label !== item.name}>
-                                <div class="text-12-regular text-text-weak break-words">{item.name}</div>
-                              </Show>
-                            </div>
+                            <div class="min-w-0 flex-1 text-13-medium text-text-strong truncate">{item.label}</div>
                           </button>
                         )
                       }}
@@ -499,6 +500,17 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
               >
                 Open terminal
               </Button>
+
+              <div class="flex items-center justify-end">
+                <Button
+                  variant="secondary"
+                  size="large"
+                  disabled={busy() || !selectedDistro() || !distroReady()}
+                  onClick={() => setStore("step", "opencode")}
+                >
+                  Next
+                </Button>
+              </div>
             </div>
           </Match>
 
@@ -550,10 +562,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                 <div>Progress</div>
               </div>
               <div class="text-12-regular text-text-weak whitespace-pre-wrap break-words">{progress().title}</div>
-              <div
-                data-scrollable
-                class="max-h-32 overflow-y-auto rounded-md border border-border-weak-base bg-background-base px-3 py-2 font-mono text-12-regular whitespace-pre-wrap break-words"
-              >
+              <div class="rounded-md border border-border-weak-base bg-background-base px-3 py-2 font-mono text-12-regular whitespace-pre-wrap break-words">
                 <For
                   each={
                     progress().lines.length
@@ -580,25 +589,22 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
         <Show when={current()?.lastError && (current()?.transcript.length ?? 0) > 0}>
           <div class="rounded-md bg-surface-base p-4 flex flex-col gap-2">
             <div class="text-14-medium text-text-strong">Diagnostics</div>
-            <div class="max-h-56 overflow-y-auto rounded-md border border-border-weak-base bg-background-base px-3 py-2 font-mono text-12-regular text-text-weak whitespace-pre-wrap break-words">
+            <div class="rounded-md border border-border-weak-base bg-background-base px-3 py-2 font-mono text-12-regular text-text-weak whitespace-pre-wrap break-words">
               <For each={current()?.transcript ?? []}>{(line) => <div>{line.text}</div>}</For>
             </div>
           </div>
         </Show>
 
-        <div class="flex items-center justify-end gap-2">
-          <Button variant="ghost" size="large" disabled={store.adding} onClick={() => dialog.close()}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            size="large"
-            disabled={!allReady() || !selectedDistro() || store.adding || busy()}
-            onClick={() => void finish()}
-          >
-            {store.adding ? "Adding..." : "Add WSL server"}
-          </Button>
-        </div>
+        <Show when={activeStep() === "opencode" && allReady() && selectedDistro()}>
+          <div class="flex items-center justify-end gap-2">
+            <Button variant="ghost" size="large" disabled={store.adding} onClick={() => dialog.close()}>
+              Cancel
+            </Button>
+            <Button variant="primary" size="large" disabled={store.adding || busy()} onClick={() => void finish()}>
+              {store.adding ? "Adding..." : "Add WSL server"}
+            </Button>
+          </div>
+        </Show>
       </Show>
     </div>
   )

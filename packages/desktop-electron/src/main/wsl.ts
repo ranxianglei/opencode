@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process"
+import { existsSync } from "node:fs"
+import { join } from "node:path"
 import type { WslDistroProbe, WslInstalledDistro, WslOnlineDistro, WslRuntimeCheck } from "../preload/types"
 import { runInteractiveCommand } from "./wsl-pty"
 
@@ -320,7 +322,7 @@ export async function installWslRuntimeElevated(opts?: RunWslOptions) {
 
 export async function installWslDistro(name: string, opts?: RunWslOptions) {
   return runInteractiveCommand(
-    "wsl",
+    resolveSystem32Command("wsl.exe"),
     ["--install", "-d", name, "--web-download", "--no-launch"],
     withTimeout(opts, DEFAULT_WSL_INSTALL_TIMEOUT_MS),
     DEFAULT_WSL_INSTALL_TIMEOUT_MS,
@@ -518,6 +520,13 @@ function summarize(value: string) {
 
 function shellEscape(value: string) {
   return `'${value.replace(/'/g, `'"'"'`)}'`
+}
+
+function resolveSystem32Command(command: string) {
+  const root = process.env.SystemRoot ?? process.env.windir
+  if (!root) return command
+  const resolved = join(root, "System32", command)
+  return existsSync(resolved) ? resolved : command
 }
 
 function withTimeout(opts: RunWslOptions | undefined, timeoutMs: number): RunWslOptions {

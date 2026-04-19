@@ -95,6 +95,15 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
       buffer.length = 0
     }
 
+    const clearPending = () => {
+      if (timer) clearTimeout(timer)
+      timer = undefined
+      queue.length = 0
+      buffer.length = 0
+      coalesced.clear()
+      staleDeltas.clear()
+    }
+
     const schedule = () => {
       if (timer) return
       const elapsed = Date.now() - last
@@ -202,6 +211,10 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
         }
       })().finally(() => {
         run = undefined
+        if (abort.signal.aborted || !started) {
+          clearPending()
+          return
+        }
         flush()
       })
       return run
@@ -225,7 +238,7 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
     onCleanup(() => {
       stop()
       abort.abort()
-      flush()
+      clearPending()
     })
 
     const sdk = createSdkForServer({

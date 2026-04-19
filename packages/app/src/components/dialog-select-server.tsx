@@ -17,6 +17,7 @@ import type { WslServersState } from "@/context/platform"
 import { usePlatform } from "@/context/platform"
 import { normalizeServerUrl, ServerConnection, useServer } from "@/context/server"
 import { type ServerHealth, useCheckServerHealth } from "@/utils/server-health"
+import { withServerSwitchOverlay } from "@/utils/server-switch"
 
 const DEFAULT_USERNAME = "opencode"
 const cachedServerStatus = new Map<ServerConnection.Key, ServerHealth>()
@@ -223,6 +224,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     },
     addWsl: {
       showWizard: props.initialView === "add-wsl",
+      pendingSelectKey: undefined as ServerConnection.Key | undefined,
     },
     editServer: {
       id: undefined as string | undefined,
@@ -345,6 +347,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   })
 
   const current = createMemo(() => items().find((x) => ServerConnection.key(x) === server.key) ?? items()[0])
+  let resolvePendingWslSelection: VoidFunction | undefined
   const healthPollKey = createMemo(() =>
     items()
       .map((conn) =>
@@ -428,28 +431,49 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
 
   async function select(conn: ServerConnection.Any, persist?: boolean) {
     if (!persist && store.status[ServerConnection.key(conn)]?.healthy === false) return
-    dialog.close()
     const nextKey = ServerConnection.key(conn)
     const changed = server.key !== nextKey
-    
-    if (persist && conn.type === "http") {
-      server.add(conn)
-      if (changed && typeof window !== "undefined" && window.history?.replaceState) {
-        window.history.replaceState(null, "", "/")
-      } else {
-        props.onNavigateHome?.()
+
+    const apply = () => {
+      dialog.close()
+      if (persist && conn.type === "http") {
+        server.add(conn)
+        if (changed && typeof window !== "undefined" && window.history?.replaceState) {
+          window.history.replaceState(null, "", "/")
+        } else {
+          props.onNavigateHome?.()
+        }
+        return
       }
+
+      batch(() => {
+        if (changed && typeof window !== "undefined" && window.history?.replaceState) {
+          window.history.replaceState(null, "", "/")
+        } else {
+          props.onNavigateHome?.()
+        }
+        server.setActive(nextKey)
+      })
+    }
+
+    if (!changed) {
+      apply()
       return
     }
-    batch(() => {
-      if (changed && typeof window !== "undefined" && window.history?.replaceState) {
-        window.history.replaceState(null, "", "/")
-      } else {
-        props.onNavigateHome?.()
-      }
-      server.setActive(nextKey)
-    })
+
+    await withServerSwitchOverlay(apply)
   }
+
+  createEffect(() => {
+    const key = store.addWsl.pendingSelectKey
+    if (!key) return
+    const conn = items().find((item) => ServerConnection.key(item) === key)
+    if (!conn) return
+    const resolve = resolvePendingWslSelection
+    resolvePendingWslSelection = undefined
+    setStore("addWsl", "pendingSelectKey", undefined)
+    void select(conn).finally(() => resolve?.())
+  })
 
   const handleAddChange = (value: string) => {
     if (addMutation.isPending) return
@@ -524,6 +548,9 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   const resetForm = () => {
     resetAdd()
     resetEdit()
+    resolvePendingWslSelection?.()
+    resolvePendingWslSelection = undefined
+    setStore("addWsl", "pendingSelectKey", undefined)
     setStore("addWsl", "showWizard", false)
   }
 
@@ -558,7 +585,21 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   const startAddWsl = () => {
     resetAdd()
     resetEdit()
+    setStore("addWsl", "pendingSelectKey", undefined)
     setStore("addWsl", "showWizard", true)
+  }
+
+  const handleAddedWsl = async (distro: string) => {
+    const key = ServerConnection.Key.make(`wsl:${distro}`)
+    const conn = items().find((item) => ServerConnection.key(item) === key)
+    if (conn) {
+      await select(conn)
+      return
+    }
+    await new Promise<void>((resolve) => {
+      resolvePendingWslSelection = resolve
+      setStore("addWsl", "pendingSelectKey", key)
+    })
   }
 
   const submitForm = () => {
@@ -646,7 +687,12 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   }
 
   return (
-    <Dialog title={formTitle()} dismissOutside={!isAddWslMode()}>
+    <Dialog
+      title={formTitle()}
+      dismissOutside={!isAddWslMode()}
+      fit={isAddWslMode()}
+      class={isAddWslMode() ? "[&_[data-slot=dialog-body]]:flex-none [&_[data-slot=dialog-body]]:overflow-visible" : undefined}
+    >
       <div class="flex flex-col gap-2">
         <Show
           when={!isFormMode()}
@@ -672,7 +718,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                 />
               }
             >
-              <DialogWslServer />
+              <DialogWslServer onAdded={handleAddedWsl} />
             </Show>
           }
         >

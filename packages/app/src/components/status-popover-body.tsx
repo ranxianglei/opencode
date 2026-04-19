@@ -15,7 +15,7 @@ import { useSDK } from "@/context/sdk"
 import { ServerConnection, useServer } from "@/context/server"
 import { useSync } from "@/context/sync"
 import { useCheckServerHealth, type ServerHealth } from "@/utils/server-health"
-import { setServerSwitching } from "@/utils/server-switch"
+import { withServerSwitchOverlay } from "@/utils/server-switch"
 
 const pollMs = 10_000
 
@@ -289,32 +289,18 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
                       aria-disabled={blocked()}
                       onClick={() => {
                         if (blocked()) return
-                        // Paint a full-window splash BEFORE the heavy
-                        // ServerKey remount so the user gets visual
-                        // feedback during the multi-second synchronous
-                        // dispose cascade (xterm + file-tree + providers).
-                        // setTimeout(0) yields to the browser so the
-                        // splash lands on screen before the cascade
-                        // starts; a second setTimeout(0) after the batch
-                        // waits for the new subtree to paint, then
-                        // dismisses the splash.
-                        setServerSwitching(true)
-                        setTimeout(() => {
-                          try {
-                            batch(() => {
-                              if (server.key !== key) {
-                                if (typeof window !== "undefined" && window.history?.replaceState) {
-                                  window.history.replaceState(null, "", "/")
-                                }
-                              } else {
-                                navigate("/")
+                        void withServerSwitchOverlay(() => {
+                          batch(() => {
+                            if (server.key !== key) {
+                              if (typeof window !== "undefined" && window.history?.replaceState) {
+                                window.history.replaceState(null, "", "/")
                               }
-                              server.setActive(key)
-                            })
-                          } finally {
-                            setTimeout(() => setServerSwitching(false), 0)
-                          }
-                        }, 0)
+                            } else {
+                              navigate("/")
+                            }
+                            server.setActive(key)
+                          })
+                        })
                       }}
                     >
                       <ServerHealthIndicator health={health[key]} />

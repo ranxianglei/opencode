@@ -14,6 +14,7 @@ import { type BaseRouterProps, Navigate, Route, Router } from "@solidjs/router"
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
 import { Effect } from "effect"
 import {
+  batch,
   type Component,
   createMemo,
   createResource,
@@ -28,7 +29,7 @@ import {
   Suspense,
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
-import { serverSwitching } from "@/utils/server-switch"
+import { serverSwitching, withServerSwitchOverlay } from "@/utils/server-switch"
 import { CommandProvider } from "@/context/command"
 import { CommentsProvider } from "@/context/comments"
 import { FileProvider } from "@/context/file"
@@ -212,9 +213,13 @@ function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean }>) {
               if (checkMode() === "background") void healthCheckActions.refetch()
             }}
             onServerSelected={(key) => {
-              setCheckMode("blocking")
-              server.setActive(key)
-              void healthCheckActions.refetch()
+              void withServerSwitchOverlay(() => {
+                batch(() => {
+                  setCheckMode("blocking")
+                  server.setActive(key)
+                })
+                void healthCheckActions.refetch()
+              })
             }}
           />
         }
