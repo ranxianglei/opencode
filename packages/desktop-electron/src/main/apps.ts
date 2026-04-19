@@ -14,13 +14,40 @@ export function resolveAppPath(appName: string): string | null {
   return resolveWindowsAppPath(appName)
 }
 
+// Parses `\\wsl$\<distro>\...` and `\\wsl.localhost\<distro>\...` UNC paths that
+// point *into* a WSL distro's rootfs. `wslpath -u` cannot handle these reliably:
+// backslashes get shell-collapsed when passed through `wsl.exe`, turning
+// `\\wsl.localhost\Debian\home\luke` into `/mnt/c/wsl.localhostDebianhomeluke`,
+// which is a valid-looking path that wedges opencode on DrvFs stat calls.
+function parseWslUncPath(value: string): { distro: string; subpath: string } | null {
+  // Normalise separators; both `\\` and `//` prefixes mean UNC.
+  const normalised = value.replace(/\\/g, "/").replace(/^\/+/, "//")
+  const match = /^\/\/(wsl\$|wsl\.localhost)\/([^/]+)(?:\/(.*))?$/i.exec(normalised)
+  if (!match) return null
+  const distro = match[2]
+  const subpath = match[3] ?? ""
+  return { distro, subpath }
+}
+
 export async function wslPath(path: string, mode: "windows" | "linux" | null, distro?: string | null): Promise<string> {
   if (process.platform !== "win32") return path
+
+  // `\\wsl$\<distro>\...` / `\\wsl.localhost\<distro>\...` -> `/<subpath>` in
+  // the target distro. Do the conversion in-process rather than shelling out
+  // to `wslpath -u`, which mangles backslashes via wsl.exe's command-line
+  // joiner. If the requested distro differs from the UNC distro, we still
+  // translate literally — callers are responsible for only picking paths
+  // inside the active distro.
+  if (mode === "linux") {
+    const unc = parseWslUncPath(path)
+    if (unc) return `/${unc.subpath}`
+  }
 
   const flag = mode === "windows" ? "-w" : "-u"
   try {
     const resolved = path.startsWith("~") ? `${distro ? await resolveWslHome(distro) : "/root"}${path.slice(1)}` : path
-    const output = await runWslInDistro(["wslpath", flag, resolved], distro)
+    const input = mode === "linux" ? resolved.replace(/\\/g, "/") : resolved
+    const output = await runWslInDistro(["wslpath", flag, input], distro)
     if (output.code !== 0) {
       throw new Error(output.stderr || output.stdout || `wslpath exited with code ${output.code}`)
     }

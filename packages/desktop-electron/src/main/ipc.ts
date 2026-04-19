@@ -21,6 +21,18 @@ const pickerFilters = (ext?: string[]) => {
 }
 
 type Deps = {
+  httpFetch: (input: {
+    url: string
+    method: string
+    headers: Record<string, string>
+    body?: string
+    timeoutMs?: number
+  }) => Promise<{
+    status: number
+    statusText: string
+    headers: Record<string, string>
+    body: string
+  }>
   killSidecar: () => void
   relaunch: () => void
   awaitInitialization: (sendStep: (step: InitStep) => void) => Promise<ServerReadyData>
@@ -56,6 +68,13 @@ type Deps = {
 }
 
 export function registerIpcHandlers(deps: Deps) {
+  const debugStore = (op: string, name: string, key: string, meta?: Record<string, unknown>) => {
+    if (app.isPackaged) return
+    if (!name.startsWith("opencode.workspace.")) return
+    if (!key.includes("terminal")) return
+    console.log(`[store ${op}] ${JSON.stringify({ name, key, ...meta })}`)
+  }
+
   const offWslServers = deps.onWslServersEvent((payload) => {
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed()) continue
@@ -64,6 +83,13 @@ export function registerIpcHandlers(deps: Deps) {
   })
   app.once("will-quit", offWslServers)
 
+  ipcMain.handle(
+    "http-fetch",
+    (
+      _event: IpcMainInvokeEvent,
+      input: { url: string; method: string; headers: Record<string, string>; body?: string; timeoutMs?: number },
+    ) => deps.httpFetch(input),
+  )
   ipcMain.handle("kill-sidecar", () => deps.killSidecar())
   ipcMain.handle("await-initialization", (event: IpcMainInvokeEvent) => {
     const send = (step: InitStep) => event.sender.send("init-step", step)
@@ -122,13 +148,24 @@ export function registerIpcHandlers(deps: Deps) {
   ipcMain.handle("store-get", (_event: IpcMainInvokeEvent, name: string, key: string) => {
     const store = getStore(name)
     const value = store.get(key)
+    debugStore("get", name, key, {
+      found: value !== undefined && value !== null,
+      length:
+        typeof value === "string"
+          ? value.length
+          : value === undefined || value === null
+            ? 0
+            : JSON.stringify(value).length,
+    })
     if (value === undefined || value === null) return null
     return typeof value === "string" ? value : JSON.stringify(value)
   })
   ipcMain.handle("store-set", (_event: IpcMainInvokeEvent, name: string, key: string, value: string) => {
+    debugStore("set", name, key, { length: value.length })
     getStore(name).set(key, value)
   })
   ipcMain.handle("store-delete", (_event: IpcMainInvokeEvent, name: string, key: string) => {
+    debugStore("delete", name, key)
     getStore(name).delete(key)
   })
   ipcMain.handle("store-clear", (_event: IpcMainInvokeEvent, name: string) => {

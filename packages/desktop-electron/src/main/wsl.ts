@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process"
 import type { WslDistroProbe, WslInstalledDistro, WslOnlineDistro, WslRuntimeCheck } from "../preload/types"
+import { runInteractiveCommand } from "./wsl-pty"
 
 export type WslCommandLine = {
   stream: "stdout" | "stderr"
@@ -13,7 +14,7 @@ export type WslCommandResult = {
   stderr: string
 }
 
-type RunWslOptions = {
+export type RunWslOptions = {
   onLine?: (line: WslCommandLine) => void
   signal?: AbortSignal
   /**
@@ -28,6 +29,7 @@ type RunWslOptions = {
 }
 
 const DEFAULT_WSL_TIMEOUT_MS = 20_000
+const DEFAULT_WSL_INSTALL_TIMEOUT_MS = 15 * 60_000
 
 // `--user root` bypasses the distro's default-user requirement. A freshly
 // installed WSL distro (Ubuntu-24.04 in particular) prompts interactively
@@ -89,21 +91,37 @@ function runCommand(command: string, args: string[], opts: RunWslOptions = {}) {
       return ""
     }
 
+    const splitOutput = (pending: string) => {
+      const lines: string[] = []
+      let start = 0
+      for (let i = 0; i < pending.length; i++) {
+        const char = pending[i]
+        if (char !== "\r" && char !== "\n") continue
+        lines.push(pending.slice(start, i))
+        if (char === "\r" && pending[i + 1] === "\n") i += 1
+        start = i + 1
+      }
+      return {
+        lines,
+        pending: pending.slice(start),
+      }
+    }
+
     const append = (stream: WslCommandLine["stream"], chunk: string) => {
       if (!chunk) return
       if (stream === "stdout") {
         stdout += chunk
         stdoutPending += chunk
-        const lines = stdoutPending.split(/\r?\n/g)
-        stdoutPending = lines.pop() ?? ""
-        for (const line of lines) opts.onLine?.({ stream: "stdout", text: line })
+        const next = splitOutput(stdoutPending)
+        stdoutPending = next.pending
+        for (const line of next.lines) opts.onLine?.({ stream: "stdout", text: line })
         return
       }
       stderr += chunk
       stderrPending += chunk
-      const lines = stderrPending.split(/\r?\n/g)
-      stderrPending = lines.pop() ?? ""
-      for (const line of lines) opts.onLine?.({ stream: "stderr", text: line })
+      const next = splitOutput(stderrPending)
+      stderrPending = next.pending
+      for (const line of next.lines) opts.onLine?.({ stream: "stderr", text: line })
     }
 
     child.stdout.on("data", (chunk: Buffer) => {
@@ -288,7 +306,7 @@ export async function listOnlineWslDistros(opts?: RunWslOptions) {
 }
 
 export async function installWslRuntime(opts?: RunWslOptions) {
-  return runWsl(["--install", "--no-distribution"], opts)
+  return runWsl(["--install", "--no-distribution"], withTimeout(opts, DEFAULT_WSL_INSTALL_TIMEOUT_MS))
 }
 
 export async function installWslRuntimeElevated(opts?: RunWslOptions) {
@@ -297,18 +315,23 @@ export async function installWslRuntimeElevated(opts?: RunWslOptions) {
     "$process = Start-Process -FilePath 'wsl.exe' -Verb RunAs -ArgumentList @('--install','--no-distribution') -Wait -PassThru",
     "if ($null -ne $process.ExitCode) { exit $process.ExitCode }",
   ].join("; ")
-  return runPowerShell(script, opts)
+  return runPowerShell(script, withTimeout(opts, DEFAULT_WSL_INSTALL_TIMEOUT_MS))
 }
 
 export async function installWslDistro(name: string, opts?: RunWslOptions) {
-  return runWsl(["--install", "-d", name, "--web-download", "--no-launch"], opts)
+  return runInteractiveCommand(
+    "wsl",
+    ["--install", "-d", name, "--web-download", "--no-launch"],
+    withTimeout(opts, DEFAULT_WSL_INSTALL_TIMEOUT_MS),
+    DEFAULT_WSL_INSTALL_TIMEOUT_MS,
+  )
 }
 
 export async function installWslOpencode(version: string, distro: string, opts?: RunWslOptions) {
   return runWslBash(
     `curl -fsSL https://opencode.ai/install | bash -s -- --version ${shellEscape(version)}`,
     distro,
-    opts,
+    withTimeout(opts, DEFAULT_WSL_INSTALL_TIMEOUT_MS),
   )
 }
 
@@ -420,10 +443,17 @@ export async function readWslCommandVersion(command: string, distro: string, opt
 }
 
 export async function upgradeWslOpencode(target: string, command: string, distro: string, opts?: RunWslOptions) {
-  return runWslBash(`${shellEscape(command)} upgrade ${shellEscape(target)}`, distro, opts)
+  return runWslBash(
+    `${shellEscape(command)} upgrade ${shellEscape(target)}`,
+    distro,
+    withTimeout(opts, DEFAULT_WSL_INSTALL_TIMEOUT_MS),
+  )
 }
 
 export function openWslTerminal(distro?: string | null) {
+  if (distro && !/^[a-zA-Z0-9_.-]+$/.test(distro)) {
+    return Promise.reject(new Error("Invalid distro name"))
+  }
   return new Promise<void>((resolve, reject) => {
     const child = spawn("cmd.exe", ["/c", "start", "", "wsl", ...(distro ? ["-d", distro] : [])], {
       detached: true,
@@ -488,4 +518,11 @@ function summarize(value: string) {
 
 function shellEscape(value: string) {
   return `'${value.replace(/'/g, `'"'"'`)}'`
+}
+
+function withTimeout(opts: RunWslOptions | undefined, timeoutMs: number): RunWslOptions {
+  return {
+    ...opts,
+    timeoutMs: opts?.timeoutMs ?? timeoutMs,
+  }
 }

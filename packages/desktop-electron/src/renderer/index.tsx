@@ -70,7 +70,7 @@ import {
 } from "@opencode-ai/app"
 import type { AsyncStorage } from "@solid-primitives/storage"
 import { MemoryRouter } from "@solidjs/router"
-import { createEffect, createResource, createSignal, onCleanup, onMount, Show } from "solid-js"
+import { createEffect, createMemo, createResource, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { render } from "solid-js/web"
 import pkg from "../../package.json"
 import { initI18n, t } from "./i18n"
@@ -138,6 +138,48 @@ const createPlatform = (): Platform => {
     const distro = activeWslDistro()
     if (!distro) return undefined
     return window.api.wslPath("~", "windows", distro).catch(() => undefined)
+  }
+
+  // SSE endpoints must keep a live connection; IPC-bridged fetch buffers the
+  // whole response body in main before returning, which breaks streams.
+  const isStreamingPath = (pathname: string) =>
+    pathname.endsWith("/event") || pathname === "/global/event" || pathname.endsWith("/pty/read")
+
+  // Chromium's network stack on Windows frequently stalls on WSL2-forwarded
+  // loopback ports (happy-eyeballs to [::1] hits the WSL port proxy which
+  // only binds v4). Node/undici in main has no such issue, so we route WSL
+  // loopback requests through the main process. `localhost`/`[::1]` are also
+  // loopback spellings we need to catch.
+  const isLoopback = (hostname: string) =>
+    hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1" || hostname === "[::1]"
+
+  const shouldBridge = (url: URL) => {
+    if (!activeWslDistro()) return false
+    if (url.protocol !== "http:") return false
+    if (!isLoopback(url.hostname)) return false
+    if (isStreamingPath(url.pathname)) return false
+    return true
+  }
+
+  const bridgedFetch = async (request: Request, timeoutMs?: number) => {
+    const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.clone().text()
+    const res = await window.api.httpFetch({
+      url: request.url,
+      method: request.method,
+      headers: Object.fromEntries(request.headers.entries()),
+      body,
+      timeoutMs,
+    })
+    // Null-body statuses (101/204/205/304) must be constructed with a null
+    // body or the Response constructor throws `Response with null body
+    // status cannot have body`. The IPC layer always hands us `res.body` as
+    // a string, so coerce to null for these statuses.
+    const nullBody = res.status === 101 || res.status === 204 || res.status === 205 || res.status === 304
+    return new Response(nullBody ? null : res.body, {
+      status: res.status,
+      statusText: res.statusText,
+      headers: res.headers,
+    })
   }
 
   const handleWslPicker = async <T extends string | string[]>(result: T | null): Promise<T | null> => {
@@ -272,8 +314,47 @@ const createPlatform = (): Platform => {
     },
 
     fetch: (input, init) => {
-      if (input instanceof Request) return fetch(input)
-      return fetch(input, init)
+      const request = input instanceof Request ? (init ? new Request(input, init) : input) : new Request(input, init)
+      const url = (() => {
+        try {
+          return new URL(request.url, location.href)
+        } catch {
+          return null
+        }
+      })()
+      if (!url || !shouldBridge(url)) {
+        if (input instanceof Request && !init) return fetch(input)
+        return fetch(request)
+      }
+      // Propagate the request's own abort signal to the bridge via a finite
+      // timeout. If nothing set one we default to 15s so connects can't hang
+      // forever waiting on a dead WSL port proxy.
+      const signal = request.signal
+      const timeoutMs = 15_000
+      return new Promise<Response>((resolve, reject) => {
+        let settled = false
+        const onAbort = () => {
+          if (settled) return
+          settled = true
+          reject(new DOMException("Aborted", "AbortError"))
+        }
+        if (signal?.aborted) return onAbort()
+        signal?.addEventListener("abort", onAbort, { once: true })
+        bridgedFetch(request, timeoutMs).then(
+          (res) => {
+            if (settled) return
+            settled = true
+            signal?.removeEventListener("abort", onAbort)
+            resolve(res)
+          },
+          (err) => {
+            if (settled) return
+            settled = true
+            signal?.removeEventListener("abort", onAbort)
+            reject(err)
+          },
+        )
+      })
     },
 
     getDefaultServer: async () => {
@@ -368,7 +449,7 @@ render(() => {
     onCleanup(off)
   }
 
-  const servers = () => {
+  const servers = createMemo(() => {
     const data = startup.latest?.sidecar
     const list: ServerConnection.Any[] = []
     if (data) {
@@ -398,7 +479,7 @@ render(() => {
                 url: `http://wsl-${item.config.distro}.invalid`,
               }
         list.push({
-          displayName: `WSL: ${item.config.distro}`,
+          displayName: item.config.distro,
           type: "sidecar",
           variant: "wsl",
           distro: item.config.distro,
@@ -407,7 +488,7 @@ render(() => {
       }
     }
     return list
-  }
+  })
 
   function handleClick(e: MouseEvent) {
     const link = (e.target as HTMLElement).closest("a.external-link") as HTMLAnchorElement | null

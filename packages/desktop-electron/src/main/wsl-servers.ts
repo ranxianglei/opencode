@@ -15,7 +15,7 @@ import type {
 } from "../preload/types"
 import { LEGACY_LOCAL_SERVER_KEY, WSL_SERVERS_KEY } from "./constants"
 import { spawnWslSidecar } from "./server"
-import { store } from "./store"
+import { getStore } from "./store"
 import type { WslCommandLine } from "./wsl"
 import {
   installWslDistro,
@@ -33,7 +33,7 @@ import {
 } from "./wsl"
 
 type RunningSidecar = {
-  listener: { stop: () => void }
+  listener: { stop: () => void; onExit: (cb: (code: number | null, signal: NodeJS.Signals | null) => void) => void }
   url: string
   username: string | null
   password: string
@@ -64,19 +64,29 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
     for (const listener of listeners) listener({ type: "state", state })
   }
 
+  const isProgressLine = (text: string) => {
+    return text.includes("[") && text.includes("]") && /(\d{1,3}(?:[.,]\d+)?)\s*%/.test(text)
+  }
+
   const setState = (next: Partial<WslServersState>) => {
     state = { ...state, ...next }
     emit()
   }
 
   const appendTranscript = (line: Omit<WslTranscriptLine, "at">) => {
-    setState({ transcript: [...state.transcript, { ...line, at: Date.now() }] })
+    const next = { ...line, at: Date.now() }
+    const last = state.transcript.at(-1)
+    if (last && last.stream === line.stream && isProgressLine(last.text) && isProgressLine(line.text)) {
+      setState({ transcript: [...state.transcript.slice(0, -1), next] })
+      return
+    }
+    setState({ transcript: [...state.transcript, next] })
   }
 
   const clearTranscript = () => setState({ transcript: [] })
 
   const persistServers = (servers: WslServerConfig[]) => {
-    store.set(WSL_SERVERS_KEY, { servers })
+    getStore().set(WSL_SERVERS_KEY, { servers })
   }
 
   const updateServer = (id: string, update: (item: WslServerItem) => WslServerItem) => {
@@ -115,6 +125,30 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
 
   const setRuntime = (id: string, runtime: WslServerRuntime) => {
     updateServer(id, (item) => ({ ...item, runtime }))
+  }
+
+  const removeMissingServer = (id: string) => {
+    const remaining = readPersistedServers().filter((item) => item.id !== id)
+    persistServers(remaining)
+    setState({ servers: state.servers.filter((item) => item.config.id !== id) })
+  }
+
+  const setOpencodeCheck = (distro: string, check: WslOpencodeCheck) => {
+    setState({
+      opencodeChecks: {
+        ...state.opencodeChecks,
+        [distro]: check,
+      },
+    })
+  }
+
+  const refreshOpencodeCheck = async (
+    distro: string,
+    opts?: { signal?: AbortSignal; onLine?: (line: WslCommandLine) => void },
+  ) => {
+    const resolved = await resolveWslOpencode(distro, opts)
+    const version = resolved ? await readWslCommandVersion(resolved, distro, opts) : null
+    setOpencodeCheck(distro, opencodeCheck(distro, resolved, version, appVersion))
   }
 
   const nextStartAttempt = (id: string) => {
@@ -156,10 +190,26 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
         username: sidecar.username,
         password: sidecar.password,
       })
+      sidecar.listener.onExit((code, signal) => {
+        if (sidecars.get(id) !== sidecar) return
+        sidecars.delete(id)
+        const message = startupFailure(code, signal)
+        setRuntime(id, { kind: "failed", message })
+        mainLogger?.error("wsl sidecar exited", { id, distro: item.config.distro, code, signal })
+      })
+      void refreshOpencodeCheck(item.config.distro).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error)
+        mainLogger?.error("wsl opencode check failed", { id, distro: item.config.distro, message })
+      })
       mainLogger?.log("wsl sidecar ready", { id, distro: item.config.distro, url: sidecar.url })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (!isCurrentStartAttempt(id, attempt)) return
+      if (isMissingDistroError(message)) {
+        removeMissingServer(id)
+        mainLogger?.error("wsl server removed after missing distro", { id, distro: item.config.distro, message })
+        return
+      }
       setRuntime(id, { kind: "failed", message })
       // Without this, an Ubuntu-style silent failure leaves no trace in
       // main.log — the controller captures the message in its state but
@@ -171,12 +221,12 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
   const stopServerInternal = async (id: string) => {
     const existing = sidecars.get(id)
     if (!existing) return
+    sidecars.delete(id)
     try {
       existing.listener.stop()
     } catch {
       // ignore stop errors
     }
-    sidecars.delete(id)
   }
 
   const runJob = async <T>(job: WslJob, runner: (abort: AbortController) => Promise<T>) => {
@@ -285,14 +335,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
     async probeOpencode(name: string) {
       await runJob({ kind: "probe-opencode", distro: name, startedAt: Date.now() }, async (abort) => {
         appendTranscript({ stream: "system", text: `Checking OpenCode in ${name}` })
-        const resolved = await resolveWslOpencode(name, { signal: abort.signal, onLine })
-        const version = resolved ? await readWslCommandVersion(resolved, name, { signal: abort.signal, onLine }) : null
-        setState({
-          opencodeChecks: {
-            ...state.opencodeChecks,
-            [name]: opencodeCheck(name, resolved, version, appVersion),
-          },
-        })
+        await refreshOpencodeCheck(name, { signal: abort.signal, onLine })
       })
     },
 
@@ -310,16 +353,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
         if (result.code !== 0) {
           throw new Error(summarize(result.stderr || result.stdout) || "OpenCode installation failed")
         }
-        const nextPath = await resolveWslOpencode(name, { signal: abort.signal, onLine })
-        const nextVersion = nextPath
-          ? await readWslCommandVersion(nextPath, name, { signal: abort.signal, onLine })
-          : null
-        setState({
-          opencodeChecks: {
-            ...state.opencodeChecks,
-            [name]: opencodeCheck(name, nextPath, nextVersion, appVersion),
-          },
-        })
+        await refreshOpencodeCheck(name, { signal: abort.signal, onLine })
       })
     },
 
@@ -408,6 +442,7 @@ function initialState(): WslServersState {
 }
 
 function readPersistedServers(): WslServerConfig[] {
+  const store = getStore()
   const existing = store.get(WSL_SERVERS_KEY)
   if (existing && typeof existing === "object") {
     const record = existing as { servers?: unknown }
@@ -420,7 +455,7 @@ function readPersistedServers(): WslServerConfig[] {
 }
 
 function migrateLegacyLocalServer(): WslServerConfig[] {
-  const legacy = store.get(LEGACY_LOCAL_SERVER_KEY)
+  const legacy = getStore().get(LEGACY_LOCAL_SERVER_KEY)
   if (!legacy || typeof legacy !== "object") return []
   const record = legacy as Record<string, unknown>
   if (record.mode !== "wsl") return []
@@ -505,6 +540,14 @@ function summarize(value: string) {
     .map((line) => line.trim())
     .filter(Boolean)
     .join("\n")
+}
+
+function isMissingDistroError(message: string) {
+  return /WSL_E_DISTRO_NOT_FOUND|There is no distribution with the supplied name/i.test(message)
+}
+
+function startupFailure(code: number | null, signal: NodeJS.Signals | null) {
+  return `WSL server exited after startup (code=${code ?? "null"} signal=${signal ?? "null"})`
 }
 
 // Re-export types used by callers

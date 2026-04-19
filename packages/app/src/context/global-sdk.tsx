@@ -235,7 +235,9 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
     })
 
     return {
-      url: currentServer.http.url,
+      get url() {
+        return server.current?.http.url ?? currentServer.http.url
+      },
       client: sdk,
       event: {
         on: emitter.on.bind(emitter),

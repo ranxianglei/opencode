@@ -10,6 +10,18 @@ import { usePlatform } from "@/context/platform"
 
 const STEPS: WslServerStep[] = ["wsl", "distro", "opencode"]
 
+function isHiddenDistro(name: string) {
+  return /^docker-desktop(?:-data)?$/i.test(name)
+}
+
+function parseProgressPercent(text: string) {
+  const match = text.match(/(\d{1,3}(?:[.,]\d+)?)\s*%/)
+  if (!match) return null
+  const value = Number.parseFloat(match[1]!.replace(",", "."))
+  if (!Number.isFinite(value)) return null
+  return Math.max(0, Math.min(99, Math.floor(value)))
+}
+
 interface DialogWslServerProps {
   onAdded?: () => void
 }
@@ -66,7 +78,11 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
     if (!distro) return null
     return (current()?.installed ?? []).find((item) => item.name === distro) ?? null
   })
-  const defaultInstalledDistro = createMemo(() => (current()?.installed ?? []).find((item) => item.isDefault) ?? null)
+  const visibleInstalledDistros = createMemo(() =>
+    (current()?.installed ?? []).filter((item) => !isHiddenDistro(item.name)),
+  )
+  const visibleOnlineDistros = createMemo(() => (current()?.online ?? []).filter((item) => !isHiddenDistro(item.name)))
+  const defaultInstalledDistro = createMemo(() => visibleInstalledDistros().find((item) => item.isDefault) ?? null)
   const opencodeCheck = createMemo(() => {
     const distro = selectedDistro()
     if (!distro) return null
@@ -97,17 +113,27 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
   })
   const existingServerDistros = createMemo(() => new Set((current()?.servers ?? []).map((item) => item.config.distro)))
   const addableInstalledDistros = createMemo(() => {
-    return (current()?.installed ?? []).filter((item) => !existingServerDistros().has(item.name))
+    return visibleInstalledDistros().filter((item) => !existingServerDistros().has(item.name))
   })
   const installableDistros = createMemo(() => {
-    const online = current()?.online ?? []
-    const installed = new Set((current()?.installed ?? []).map((item) => item.name))
+    const online = visibleOnlineDistros()
+    const installed = new Set(visibleInstalledDistros().map((item) => item.name))
     const hasVersionedUbuntu = online.some((item) => /^Ubuntu-\d/.test(item.name))
     return online
       .filter((item) => !installed.has(item.name))
       .filter((item) => !(item.name === "Ubuntu" && hasVersionedUbuntu))
   })
   const installTarget = createMemo(() => installableDistros().find((item) => item.name === store.installTarget) ?? null)
+  const installingDistro = createMemo(() => current()?.job?.kind === "install-distro")
+  const installDistroPercent = createMemo(() => {
+    if (!installingDistro()) return null
+    const transcript = current()?.transcript ?? []
+    for (let i = transcript.length - 1; i >= 0; i--) {
+      const percent = parseProgressPercent(transcript[i]!.text)
+      if (percent !== null) return percent
+    }
+    return null
+  })
   const wslReady = createMemo(() => !!current()?.runtime?.available && !current()?.pendingRestart)
   const distroReady = createMemo(() => {
     const probe = selectedProbe()
@@ -284,12 +310,12 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
   return (
     <div class="px-5 pb-5 flex flex-col gap-4">
       <Show when={!store.loading} fallback={<div class="px-1 py-6 text-14-regular text-text-weak">Loading...</div>}>
-        <div class="flex gap-2 overflow-x-auto pb-1">
+        <div class="flex gap-2 pb-1">
           <For each={steps()}>
             {(item) => (
               <button
                 type="button"
-                class="min-w-[132px] rounded-md border px-3 py-2 text-left transition-colors"
+                class="basis-0 flex-1 min-w-0 rounded-md border px-3 py-2 text-left transition-colors"
                 classList={{
                   "border-border-strong-base bg-surface-base-hover": item.state === "current",
                   "border-icon-success-base/40 bg-surface-base": item.state === "done",
@@ -343,7 +369,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                   when={addableInstalledDistros().length > 0}
                   fallback={
                     <div class="text-12-regular text-text-weak">
-                      {current()?.installed.length
+                      {visibleInstalledDistros().length
                         ? "All installed distros are already added."
                         : current()?.runtime?.available
                           ? "No distros detected yet."
@@ -375,14 +401,24 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                 <div class="rounded-md border border-border-weak-base p-2 flex flex-col gap-2">
                   <div class="px-1 flex items-center justify-between gap-3">
                     <div class="text-12-medium text-text-weak">Install</div>
-                    <Button
-                      variant="secondary"
-                      size="small"
-                      disabled={busy() || !installTarget()}
-                      onClick={() => void run(() => wslServers()!.installDistro(installTarget()!.name))}
-                    >
-                      Install
-                    </Button>
+                    <div class="flex items-center gap-2 shrink-0">
+                      <Show when={installingDistro() && installDistroPercent() !== null}>
+                        <span class="text-12-regular text-text-weak shrink-0 tabular-nums min-w-[3ch] text-right">
+                          {installDistroPercent()}%
+                        </span>
+                      </Show>
+                      <Show when={installingDistro()}>
+                        <Spinner class="h-4 w-4 text-icon-info-base shrink-0" />
+                      </Show>
+                      <Button
+                        variant="secondary"
+                        size="small"
+                        disabled={busy() || !installTarget()}
+                        onClick={() => void run(() => wslServers()!.installDistro(installTarget()!.name))}
+                      >
+                        {installingDistro() ? "Installing..." : "Install"}
+                      </Button>
+                    </div>
                   </div>
                   <div
                     role="radiogroup"

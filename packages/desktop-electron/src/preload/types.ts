@@ -125,6 +125,18 @@ export type TitlebarTheme = {
 }
 
 export type ElectronAPI = {
+  httpFetch: (input: {
+    url: string
+    method: string
+    headers: Record<string, string>
+    body?: string
+    timeoutMs?: number
+  }) => Promise<{
+    status: number
+    statusText: string
+    headers: Record<string, string>
+    body: string
+  }>
   killSidecar: () => Promise<void>
   installCli: () => Promise<string>
   awaitInitialization: (onStep: (step: InitStep) => void) => Promise<ServerReadyData>

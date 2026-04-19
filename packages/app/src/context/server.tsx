@@ -171,6 +171,13 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       if (state.active !== input) setState("active", input)
     }
 
+    function nextActiveKey(exclude?: ServerConnection.Key) {
+      const available = allServers().filter((conn) => ServerConnection.key(conn) !== exclude)
+      const preferred = available.find((conn) => ServerConnection.key(conn) === props.defaultServer)
+      const next = preferred ?? available[0]
+      return next ? ServerConnection.key(next) : props.defaultServer
+    }
+
     function add(input: ServerConnection.Http) {
       const url_ = normalizeServerUrl(input.http.url)
       if (!url_) return
@@ -192,8 +199,7 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       batch(() => {
         setStore("list", list)
         if (state.active === key) {
-          const next = list[0]
-          setState("active", next ? ServerConnection.Key.make(url(next)) : props.defaultServer)
+          setState("active", nextActiveKey(key))
         }
       })
     }
@@ -239,6 +245,14 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
     const current: Accessor<ServerConnection.Any | undefined> = createMemo(
       () => allServers().find((s) => ServerConnection.key(s) === state.active) ?? allServers()[0],
     )
+
+    createEffect(() => {
+      const list = allServers()
+      if (!list.length) return
+      if (list.some((conn) => ServerConnection.key(conn) === state.active)) return
+      setState("active", nextActiveKey(state.active))
+    })
+
     const isLocal = createMemo(() => {
       const c = current()
       return c?.type === "sidecar" || (c?.type === "http" && isLocalHost(c.http.url))

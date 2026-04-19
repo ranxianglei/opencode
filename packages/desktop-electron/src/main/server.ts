@@ -10,11 +10,18 @@ import { type WslCommandLine, resolveWslOpencode, wslArgs } from "./wsl"
 export type HealthCheck = { wait: Promise<void> }
 
 export function getDefaultServerUrl(): string | null {
-  const value = getStore().get(DEFAULT_SERVER_URL_KEY)
-  return typeof value === "string" ? value : null
+  const store = getStore()
+  const value = store.get(DEFAULT_SERVER_URL_KEY)
+  if (typeof value !== "string") return null
+  if (value === "sidecar") {
+    store.set(DEFAULT_SERVER_URL_KEY, "local:windows")
+    return "local:windows"
+  }
+  return value
 }
 
 export function setDefaultServerUrl(url: string | null) {
+  const store = getStore()
   if (url) {
     getStore().set(DEFAULT_SERVER_URL_KEY, url)
     return
@@ -73,7 +80,7 @@ export async function spawnLocalServer(hostname: string, port: number, password:
 }
 
 export type WslSidecar = {
-  listener: { stop: () => void }
+  listener: { stop: () => void; onExit: (cb: (code: number | null, signal: NodeJS.Signals | null) => void) => void }
   url: string
   username: string | null
   password: string
@@ -98,16 +105,44 @@ export async function spawnWslSidecar(
   const port = await allocatePort()
   const password = randomUUID()
   const username = "opencode"
+  const logLevel = app.isPackaged ? "WARN" : "INFO"
 
   const script = [
     "set -euo pipefail",
-    "export OPENCODE_EXPERIMENTAL_ICON_DISCOVERY=true",
-    "export OPENCODE_EXPERIMENTAL_FILEWATCHER=true",
+    // wsl.exe inherits the Windows-side cwd (e.g. C:\Users\Lukem) and maps it
+    // to the distro as /mnt/c/Users/Lukem — a DrvFs/9p path. opencode's
+    // instance middleware falls back to `process.cwd()` when a request
+    // arrives without a `directory=` query or `x-opencode-directory` header
+    // (see opencode server.ts InstanceMiddleware), and then calls
+    // `realpathSync(process.cwd())` synchronously on the main thread. A
+    // statx against a 9p path can wedge the whole event loop in kernel
+    // uninterruptible sleep, freezing the accept loop. Move cwd to the
+    // user's native Linux home so the fallback can't land on DrvFs.
+    'cd "$HOME" || cd /',
+    // wsl.exe by default splices the Windows %PATH% into the distro's $PATH
+    // via the interop layer (every `/mnt/c/Program Files/...` entry). Anything
+    // the sidecar spawns — PTY login shells, plugin helpers, etc. — then
+    // inherits it, which means `which pwsh.exe` resolves to the Windows
+    // PowerShell binary and bash-l profiles that end with
+    //   eval "$(oh-my-posh init bash)"   (or similar)
+    // silently run Windows pwsh for prompt rendering, whose banner
+    // ("Loading personal and system profiles took Xms.") then shows up in
+    // opencode's terminal pane. We want a clean, Linux-only environment in
+    // the sidecar, so filter every /mnt/* segment out of PATH and clear
+    // WSLENV so no further Windows vars leak in. Users who really need
+    // Windows binaries in the sidecar can invoke them by absolute path.
+    'PATH=$(awk -v RS=: -v ORS=: \'$0 !~ /^\\/mnt\\//\' <<<"$PATH" | sed "s/:$//")',
+    "export PATH",
+    "export WSLENV=",
+    // WSL sidecars often target /mnt/* worktrees. Keep the desktop-only
+    // watcher/discovery features off there because DrvFs/9p stalls can wedge
+    // the server process after it starts listening.
+    "export OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER=true",
     "export OPENCODE_CLIENT=desktop",
     `export OPENCODE_SERVER_USERNAME=${shellEscape(username)}`,
     `export OPENCODE_SERVER_PASSWORD=${shellEscape(password)}`,
     'export XDG_STATE_HOME="$HOME/.local/state"',
-    `exec ${shellEscape(opencode)} --print-logs --log-level WARN serve --hostname 0.0.0.0 --port ${port}`,
+    `exec ${shellEscape(opencode)} --print-logs --log-level ${logLevel} serve --hostname 0.0.0.0 --port ${port}`,
   ].join("\n")
 
   const child = spawn("wsl", wslArgs(["bash", "-se"], distro), {
@@ -165,6 +200,9 @@ export async function spawnWslSidecar(
     listener: {
       stop() {
         child.kill()
+      },
+      onExit(cb) {
+        child.once("exit", cb)
       },
     },
     url,

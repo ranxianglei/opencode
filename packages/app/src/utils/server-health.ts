@@ -65,6 +65,21 @@ function retryable(error: unknown, signal?: AbortSignal) {
   return /network|fetch|econnreset|econnrefused|enotfound|timedout/i.test(error.message)
 }
 
+function serializeError(error: unknown): unknown {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    }
+  }
+  return error
+}
+
+function stringifyLog(label: string, value: unknown) {
+  return `${label} ${JSON.stringify(value)}`
+}
+
 export async function checkServerHealth(
   server: ServerConnection.HttpBase,
   fetch: typeof globalThis.fetch,
@@ -74,7 +89,19 @@ export async function checkServerHealth(
   const signal = opts?.signal ?? timeout?.signal
   const retryCount = opts?.retryCount ?? defaultRetryCount
   const retryDelayMs = opts?.retryDelayMs ?? defaultRetryDelayMs
+  const logFailure = (phase: string, count: number, error: unknown) => {
+    console.error(
+      stringifyLog("[server health] request failed", {
+        phase,
+        attempt: count + 1,
+        url: server.url,
+        hasAuth: !!server.password,
+        error: serializeError(error),
+      }),
+    )
+  }
   const next = (count: number, error: unknown) => {
+    logFailure("retry", count, error)
     if (count >= retryCount || !retryable(error, signal)) return Promise.resolve({ healthy: false } as const)
     return wait(retryDelayMs * (count + 1), signal)
       .then(() => attempt(count + 1))
@@ -87,7 +114,10 @@ export async function checkServerHealth(
       signal,
     })
       .global.health()
-      .then((x) => (x.error ? next(count, x.error) : { healthy: x.data?.healthy === true, version: x.data?.version }))
+      .then((x) => {
+        if (x.error) return next(count, x.error)
+        return { healthy: x.data?.healthy === true, version: x.data?.version }
+      })
       .catch((error) => next(count, error))
   return attempt(0).finally(() => timeout?.clear?.())
 }

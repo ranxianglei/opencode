@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { existsSync } from "node:fs"
+import * as nodeHttp from "node:http"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import type { Event } from "electron"
@@ -41,7 +42,7 @@ import { initLogging } from "./logging"
 import { parseMarkdown } from "./markdown"
 import { createMenu } from "./menu"
 import { allocatePort, getDefaultServerUrl, setDefaultServerUrl, spawnLocalServer, spawnWslSidecar } from "./server"
-import { store } from "./store"
+import { getStore } from "./store"
 import { createWslServersController } from "./wsl-servers"
 import { createLoadingWindow, createMainWindow, setBackgroundColor, setDockIcon } from "./windows"
 
@@ -75,11 +76,15 @@ logger.log("app starting", {
   version: app.getVersion(),
   packaged: app.isPackaged,
 })
+// NOTE: the first getStore() call here is intentional — it is the earliest
+// point after `app.setName` / `app.setPath("userData", ...)` have run, so
+// electron-store correctly resolves its root to the channel-specific
+// userData dir (`...desktop.dev` in dev) rather than the package.json name.
 logger.log("config paths", {
   userData: app.getPath("userData"),
-  settingsStore: store.path,
+  settingsStore: getStore().path,
   wslServersKey: WSL_SERVERS_KEY,
-  wslServers: store.get(WSL_SERVERS_KEY) ?? null,
+  wslServers: getStore().get(WSL_SERVERS_KEY) ?? null,
 })
 
 setupApp()
@@ -330,6 +335,7 @@ function wireMenu() {
 }
 
 registerIpcHandlers({
+  httpFetch: (input) => bridgedHttpFetch(input),
   killSidecar: () => killSidecar(),
   relaunch: () => relaunchApp(),
   awaitInitialization: async (sendStep) => {
@@ -389,6 +395,82 @@ function relaunchApp() {
   wslServers.stopAll()
   app.relaunch()
   app.exit(0)
+}
+
+// Uses node:http directly rather than global fetch (undici). On Windows,
+// undici pools keep-alive sockets across requests; the WSL2 port proxy
+// silently drops idle loopback sockets, so reusing one hangs until timeout.
+// `agent: false` + `Connection: close` forces a fresh TCP connection per
+// request, which is the only reliable way to hit a WSL-forwarded port.
+function bridgedHttpFetch(input: {
+  url: string
+  method: string
+  headers: Record<string, string>
+  body?: string
+  timeoutMs?: number
+}): Promise<{
+  status: number
+  statusText: string
+  headers: Record<string, string>
+  body: string
+}> {
+  return new Promise((resolve, reject) => {
+    let parsed: URL
+    try {
+      parsed = new URL(input.url)
+    } catch (error) {
+      reject(new Error(`httpFetch: invalid url ${input.url}: ${String(error)}`))
+      return
+    }
+    if (parsed.protocol !== "http:") {
+      reject(new Error(`httpFetch: only http: is supported (got ${parsed.protocol})`))
+      return
+    }
+
+    const req = nodeHttp.request({
+      host: parsed.hostname,
+      port: parsed.port ? Number(parsed.port) : 80,
+      path: `${parsed.pathname}${parsed.search}`,
+      method: input.method,
+      headers: { ...input.headers, connection: "close" },
+      agent: false,
+    })
+
+    const timeoutMs = input.timeoutMs ?? 15_000
+    req.setTimeout(timeoutMs, () => {
+      req.destroy(new Error(`httpFetch: timeout after ${timeoutMs}ms (${input.method} ${input.url})`))
+    })
+
+    req.once("error", (error) => {
+      const err = error as NodeJS.ErrnoException
+      const detail = [err.name, err.code, err.message].filter(Boolean).join(" | ")
+      reject(new Error(`httpFetch: ${detail || "unknown error"}`))
+    })
+
+    req.once("response", (res) => {
+      const chunks: Buffer[] = []
+      res.on("data", (chunk: Buffer) => chunks.push(chunk))
+      res.once("end", () => {
+        const headers: Record<string, string> = {}
+        for (const [key, value] of Object.entries(res.headers)) {
+          if (value === undefined) continue
+          headers[key] = Array.isArray(value) ? value.join(", ") : String(value)
+        }
+        resolve({
+          status: res.statusCode ?? 0,
+          statusText: res.statusMessage ?? "",
+          headers,
+          body: Buffer.concat(chunks).toString("utf8"),
+        })
+      })
+      res.once("error", (error) => {
+        reject(new Error(`httpFetch response error: ${String(error)}`))
+      })
+    })
+
+    if (input.body !== undefined) req.write(input.body)
+    req.end()
+  })
 }
 
 function ensureLoopbackNoProxy() {

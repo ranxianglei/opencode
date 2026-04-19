@@ -74,6 +74,11 @@ const errorName = (err: unknown) => {
   return typeof errorName === "string" ? errorName : undefined
 }
 
+const logTerminal = (phase: string, input: Record<string, unknown>) => {
+  if (!import.meta.env.DEV) return
+  console.log(`[terminal ui] ${JSON.stringify({ phase, ...input })}`)
+}
+
 const useTerminalUiBindings = (input: {
   container: HTMLDivElement
   term: Term
@@ -169,11 +174,11 @@ export const Terminal = (props: TerminalProps) => {
   const server = useServer()
   const directory = sdk.directory
   const client = sdk.client
-  const url = sdk.url
   const auth = server.current?.http
   const username = auth?.username ?? "opencode"
   const password = auth?.password ?? ""
-  const sameOrigin = new URL(url, location.href).origin === location.origin
+  const currentUrl = () => server.current?.http.url ?? sdk.url
+  const sameOrigin = () => new URL(currentUrl(), location.href).origin === location.origin
   let container!: HTMLDivElement
   const [local, others] = splitProps(props, ["pty", "class", "classList", "autoFocus", "onConnect", "onConnectError"])
   const id = local.pty.id
@@ -450,20 +455,32 @@ export const Terminal = (props: TerminalProps) => {
           output.flush(resolve)
         })
 
-      if (restore && restoreSize) {
+      // Defer the serialised `restore` buffer until the WebSocket actually
+      // opens against the live PTY. Previously we wrote it synchronously
+      // before connect, which painted stale content on screen whenever the
+      // sidecar had restarted (e.g. a server swap): every saved pty id
+      // belongs to the old sidecar, so connect eventually fails and the
+      // clone handler wipes the buffer — but you'd see the old bash/pwsh
+      // scrollback flash first. Now `restore` is only applied once we know
+      // the pty is real (handleOpen), and if connect fails clone clears
+      // `buffer` in the store so the next mount has nothing to replay.
+      fit.fit()
+      scheduleSize(t.cols, t.rows)
+      startResize()
+
+      let restored = false
+      const applyRestore = async () => {
+        if (restored) return
+        restored = true
+        if (!restore) return
+        logTerminal("restore.apply", {
+          id,
+          serverKey: server.key ?? null,
+          directory,
+          restoreLength: restore.length,
+        })
         await write(restore)
-        fit.fit()
-        scheduleSize(t.cols, t.rows)
         if (scrollY !== undefined) t.scrollToLine(scrollY)
-        startResize()
-      } else {
-        fit.fit()
-        scheduleSize(t.cols, t.rows)
-        if (restore) {
-          await write(restore)
-          if (scrollY !== undefined) t.scrollToLine(scrollY)
-        }
-        startResize()
       }
 
       const once = { value: false }
@@ -509,16 +526,33 @@ export const Terminal = (props: TerminalProps) => {
         if (disposed) return
         drop?.()
 
-        const next = new URL(url + `/pty/${id}/connect`)
+        const baseUrl = currentUrl()
+        if (sdk.url !== baseUrl) {
+          console.error(
+            `[terminal panic] sdk.url mismatch id=${id} serverKey=${server.key ?? ""} directory=${directory} sdkUrl=${sdk.url} currentUrl=${baseUrl}`,
+          )
+        }
+
+        const next = new URL(baseUrl + `/pty/${id}/connect`)
         next.searchParams.set("directory", directory)
         next.searchParams.set("cursor", String(seek))
         next.protocol = next.protocol === "https:" ? "wss:" : "ws:"
-        if (!sameOrigin && password) {
+        if (!sameOrigin() && password) {
           next.searchParams.set("auth_token", btoa(`${username}:${password}`))
           // For same-origin requests, let the browser reuse the page's existing auth.
           next.username = username
           next.password = password
         }
+
+        logTerminal("socket.open", {
+          id,
+          serverKey: server.key ?? null,
+          directory,
+          restoreLength: restore.length,
+          sdkUrl: sdk.url,
+          currentUrl: baseUrl,
+          wsUrl: next.toString(),
+        })
 
         const socket = new WebSocket(next)
         socket.binaryType = "arraybuffer"
@@ -527,6 +561,16 @@ export const Terminal = (props: TerminalProps) => {
         const handleOpen = () => {
           if (disposed) return
           tries = 0
+          logTerminal("socket.connected", {
+            id,
+            serverKey: server.key ?? null,
+            directory,
+            currentUrl: baseUrl,
+          })
+          // Paint the saved buffer now that we've confirmed the pty really
+          // exists on the current sidecar. Fire-and-forget: write()'s own
+          // flush keeps the data ordered with incoming WS messages.
+          void applyRestore()
           local.onConnect?.()
           scheduleSize(t.cols, t.rows)
         }
@@ -581,6 +625,14 @@ export const Terminal = (props: TerminalProps) => {
           socket.removeEventListener("close", handleClose)
           if (disposed) return
           if (event.code === 1000) return
+          logTerminal("socket.closed", {
+            id,
+            serverKey: server.key ?? null,
+            directory,
+            code: event.code,
+            reason: event.reason || null,
+            currentUrl: baseUrl,
+          })
           retry(new Error(language.t("terminal.connectionLost.abnormalClose", { code: event.code })))
         }
 
@@ -589,6 +641,29 @@ export const Terminal = (props: TerminalProps) => {
         socket.addEventListener("message", handleMessage)
         socket.addEventListener("error", handleError)
         socket.addEventListener("close", handleClose)
+      }
+
+      // If we're reconnecting to a saved pty AND we have a serialised buffer
+      // to replay, verify the pty still exists on the current sidecar BEFORE
+      // upgrading the WebSocket. Hono's upgradeWebSocket handler throws
+      // "Session not found" inside `onOpen` (packages/opencode/src/server/
+      // routes/instance/pty.ts:196-205), which means the client still gets a
+      // brief `open` event before the server closes the socket — enough to
+      // fire handleOpen and paint the stale buffer. Pre-checking turns this
+      // into a single pty.get() round-trip that routes directly into the
+      // clone path on NotFound, so restore never runs against a dead pty.
+      if (restore) {
+        logTerminal("restore.inspect", {
+          id,
+          serverKey: server.key ?? null,
+          directory,
+          restoreLength: restore.length,
+        })
+        if (await gone()) {
+          if (!disposed) fail(new Error("Session not found"))
+          return
+        }
+        if (disposed) return
       }
 
       open()
@@ -606,6 +681,13 @@ export const Terminal = (props: TerminalProps) => {
   })
 
   onCleanup(() => {
+    logTerminal("cleanup", {
+      id,
+      serverKey: server.key ?? null,
+      directory,
+      cursor,
+      restoreLength: restore.length,
+    })
     disposed = true
     if (fitFrame !== undefined) cancelAnimationFrame(fitFrame)
     if (sizeTimer !== undefined) clearTimeout(sizeTimer)

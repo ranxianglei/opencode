@@ -24,7 +24,20 @@ pub fn get_default_server_url(app: AppHandle) -> Result<Option<String>, String> 
 
     let value = store.get(DEFAULT_SERVER_URL_KEY);
     match value {
-        Some(v) => Ok(v.as_str().map(String::from)),
+        Some(v) => match v.as_str() {
+            Some("sidecar") => {
+                store.set(
+                    DEFAULT_SERVER_URL_KEY,
+                    serde_json::Value::String("local:windows".to_string()),
+                );
+                store
+                    .save()
+                    .map_err(|e| format!("Failed to save settings: {}", e))?;
+                Ok(Some("local:windows".to_string()))
+            }
+            Some(value) => Ok(Some(value.to_string())),
+            None => Ok(None),
+        },
         None => Ok(None),
     }
 }

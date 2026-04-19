@@ -12,7 +12,7 @@ import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
 import { useSDK } from "@/context/sdk"
-import { normalizeServerUrl, ServerConnection, useServer } from "@/context/server"
+import { ServerConnection, useServer } from "@/context/server"
 import { useSync } from "@/context/sync"
 import { useCheckServerHealth, type ServerHealth } from "@/utils/server-health"
 import { setServerSwitching } from "@/utils/server-switch"
@@ -91,7 +91,7 @@ const useDefaultServerKey = (
   get: (() => string | Promise<string | null | undefined> | null | undefined) | undefined,
 ) => {
   const [state, setState] = createStore({
-    url: undefined as string | undefined,
+    key: undefined as ServerConnection.Key | undefined,
     tick: 0,
   })
 
@@ -100,7 +100,7 @@ const useDefaultServerKey = (
     let dead = false
     const result = get?.()
     if (!result) {
-      setState("url", undefined)
+      setState("key", undefined)
       onCleanup(() => {
         dead = true
       })
@@ -110,7 +110,7 @@ const useDefaultServerKey = (
     if (result instanceof Promise) {
       void result.then((next) => {
         if (dead) return
-        setState("url", next ? normalizeServerUrl(next) : undefined)
+        setState("key", next ? ServerConnection.Key.make(next) : undefined)
       })
       onCleanup(() => {
         dead = true
@@ -118,18 +118,14 @@ const useDefaultServerKey = (
       return
     }
 
-    setState("url", normalizeServerUrl(result))
+    setState("key", ServerConnection.Key.make(result))
     onCleanup(() => {
       dead = true
     })
   })
 
   return {
-    key: () => {
-      const u = state.url
-      if (!u) return
-      return ServerConnection.key({ type: "http", http: { url: u } })
-    },
+    key: () => state.key,
     refresh: () => setState("tick", (value) => value + 1),
   }
 }
@@ -306,7 +302,13 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
                         setTimeout(() => {
                           try {
                             batch(() => {
-                              navigate("/")
+                              if (server.key !== key) {
+                                if (typeof window !== "undefined" && window.history?.replaceState) {
+                                  window.history.replaceState(null, "", "/")
+                                }
+                              } else {
+                                navigate("/")
+                              }
                               server.setActive(key)
                             })
                           } finally {
