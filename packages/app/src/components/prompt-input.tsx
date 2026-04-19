@@ -33,6 +33,7 @@ import { Persist, persisted } from "@/utils/persist"
 import { usePermission } from "@/context/permission"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
+import { useServer } from "@/context/server"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { createSessionTabs } from "@/pages/session/helpers"
 import { createTextFragment, getCursorPosition, setCursorPosition, setRangeEdge } from "./prompt-input/editor-dom"
@@ -112,6 +113,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   const dialog = useDialog()
   const providers = useProviders()
   const command = useCommand()
+  const server = useServer()
   const permission = usePermission()
   const language = useLanguage()
   const platform = usePlatform()
@@ -1252,11 +1254,11 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     }
   }
 
-  const agentsQuery = useQuery(() => loadAgentsQuery(sdk.directory))
+  const agentsQuery = useQuery(() => loadAgentsQuery(sdk.directory, server.key))
   const agentsLoading = () => agentsQuery.isLoading
 
-  const globalProvidersQuery = useQuery(() => loadProvidersQuery(null))
-  const providersQuery = useQuery(() => loadProvidersQuery(sdk.directory))
+  const globalProvidersQuery = useQuery(() => loadProvidersQuery(null, server.key))
+  const providersQuery = useQuery(() => loadProvidersQuery(sdk.directory, server.key))
 
   const providersLoading = () => agentsLoading() || providersQuery.isLoading || globalProvidersQuery.isLoading
 

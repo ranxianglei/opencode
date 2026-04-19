@@ -69,6 +69,7 @@ function runAll(list: Array<() => Promise<unknown>>) {
 
 export async function bootstrapGlobal(input: {
   globalSDK: OpencodeClient
+  serverKey: string | undefined
   requestFailedTitle: string
   translate: (key: string, vars?: Record<string, string | number>) => string
   formatMoreCount: (count: number) => string
@@ -84,7 +85,7 @@ export async function bootstrapGlobal(input: {
       ),
     () =>
       input.queryClient.fetchQuery({
-        ...loadProvidersQuery(null),
+        ...loadProvidersQuery(null, input.serverKey),
         queryFn: () =>
           retry(() =>
             input.globalSDK.provider.list().then((x) => {
@@ -180,14 +181,15 @@ function warmSessions(input: {
   ).then(() => undefined)
 }
 
-export const loadProvidersQuery = (directory: string | null) =>
-  queryOptions<null>({ queryKey: [directory, "providers"], queryFn: skipToken })
+export const loadProvidersQuery = (directory: string | null, serverKey: string | undefined) =>
+  queryOptions<null>({ queryKey: [serverKey, directory, "providers"], queryFn: skipToken })
 
-export const loadAgentsQuery = (directory: string | null) =>
-  queryOptions<null>({ queryKey: [directory, "agents"], queryFn: skipToken })
+export const loadAgentsQuery = (directory: string | null, serverKey: string | undefined) =>
+  queryOptions<null>({ queryKey: [serverKey, directory, "agents"], queryFn: skipToken })
 
 export async function bootstrapDirectory(input: {
   directory: string
+  serverKey: string | undefined
   sdk: OpencodeClient
   store: Store<State>
   setStore: SetStoreFunction<State>
@@ -239,7 +241,7 @@ export async function bootstrapDirectory(input: {
     const slow = [
       () =>
         input.queryClient.ensureQueryData({
-          ...loadAgentsQuery(input.directory),
+          ...loadAgentsQuery(input.directory, input.serverKey),
           queryFn: () =>
             retry(() => input.sdk.app.agents().then((x) => input.setStore("agent", normalizeAgentList(x.data)))).then(
               () => null,
@@ -349,7 +351,7 @@ export async function bootstrapDirectory(input: {
     const rev = (providerRev.get(input.directory) ?? 0) + 1
     providerRev.set(input.directory, rev)
     void input.queryClient.ensureQueryData({
-      ...loadSessionsQuery(input.directory),
+      ...loadProvidersQuery(input.directory, input.serverKey),
       queryFn: () =>
         retry(() => input.sdk.provider.list())
           .then((x) => {

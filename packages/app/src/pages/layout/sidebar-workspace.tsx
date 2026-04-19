@@ -16,6 +16,7 @@ import { type Session } from "@opencode-ai/sdk/v2/client"
 import { type LocalProject } from "@/context/layout"
 import { loadSessionsQuery, useGlobalSync } from "@/context/global-sync"
 import { useLanguage } from "@/context/language"
+import { useServer } from "@/context/server"
 import { NewSessionItem, SessionItem, SessionSkeleton } from "./sidebar-items"
 import { sortedRootSessions, workspaceKey } from "./helpers"
 import { useQuery } from "@tanstack/solid-query"
@@ -327,6 +328,7 @@ export const SortableWorkspace = (props: {
   // these memos with stale props.
   const local = createMemo(() => props.directory === (props.project?.worktree ?? ""))
   const active = createMemo(() => workspaceKey(props.ctx.currentDir()) === workspaceKey(props.directory))
+  const server = useServer()
   const workspaceValue = createMemo(() => {
     const branch = workspaceStore.vcs?.branch
     const name = branch ?? getFilename(props.directory)
@@ -338,7 +340,7 @@ export const SortableWorkspace = (props: {
   const boot = createMemo(() => open() || active())
   const count = createMemo(() => sessions()?.length ?? 0)
   const hasMore = createMemo(() => workspaceStore.sessionTotal > count())
-  const query = useQuery(() => ({ ...loadSessionsQuery(props.project.worktree) }))
+  const query = useQuery(() => ({ ...loadSessionsQuery(props.project.worktree, server.key) }))
   const busy = createMemo(() => props.ctx.isBusy(props.directory))
   const loading = () => query.isLoading
   const touch = createMediaQuery("(hover: none)")
@@ -465,6 +467,7 @@ export const LocalWorkspace = (props: {
 }): JSX.Element => {
   const globalSync = useGlobalSync()
   const language = useLanguage()
+  const server = useServer()
   // Same guard pattern as SortableWorkspace: the parent passes
   // `project={project()!}` but `project()` can transiently flip to
   // undefined during a server-switch cascade before this component
@@ -484,7 +487,7 @@ export const LocalWorkspace = (props: {
   })
   const booted = createMemo((prev) => prev || workspace()?.store.status === "complete", false)
   const count = createMemo(() => sessions()?.length ?? 0)
-  const query = useQuery(() => ({ ...loadSessionsQuery(worktree()) }))
+  const query = useQuery(() => ({ ...loadSessionsQuery(worktree(), server.key) }))
   const loading = createMemo(() => query.isPending && count() === 0)
   const hasMore = createMemo(() => (workspace()?.store.sessionTotal ?? 0) > count())
   const loadMore = async () => {
