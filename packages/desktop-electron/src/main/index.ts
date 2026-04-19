@@ -7,6 +7,8 @@ import { join } from "node:path"
 import type { Event } from "electron"
 import { app, BrowserWindow, dialog } from "electron"
 import pkg from "electron-updater"
+import { drizzle } from "drizzle-orm/node-sqlite"
+import type { Server } from "virtual:opencode-server"
 
 import contextMenu from "electron-context-menu"
 contextMenu({ showSaveImageAs: true, showLookUpSelection: false, showSearchWithGoogle: false })
@@ -50,7 +52,7 @@ const initEmitter = new EventEmitter()
 let initStep: InitStep = { phase: "server_waiting" }
 
 let mainWindow: BrowserWindow | null = null
-let server: { stop(): void } | null = null
+let server: Server.Listener | null = null
 const loadingComplete = defer<void>()
 
 const pendingDeepLinks: string[] = []
@@ -176,7 +178,6 @@ async function initialize() {
   const password = randomUUID()
   const key = "local:windows"
 
-  logger.log("spawning windows sidecar", { url })
   const startupData: ServerReadyData = {
     url,
     username: "opencode",
@@ -188,21 +189,6 @@ async function initialize() {
       password,
     },
   }
-  let startupError: Error | null = null
-  const startup = await (async () => {
-    try {
-      return await spawnLocalServer(hostname, port, password)
-    } catch (error) {
-      startupError = asError(error)
-      logger.error("windows sidecar startup failed", startupError)
-      return undefined
-    }
-  })()
-  server = startup?.listener ?? null
-
-  // Initialize WSL sidecars in parallel; failures do not block app startup.
-  void wslServers.initialize().catch((error) => logger.error("wsl server initialization failed", asError(error)))
-
   const loadingTask = (async () => {
     logger.log("sidecar connection started", { url })
 
@@ -214,8 +200,37 @@ async function initialize() {
     })
 
     if (needsMigration) {
+      const { Database, JsonMigration } = await import("virtual:opencode-server")
+      await JsonMigration.run(drizzle({ client: Database.Client().$client }), {
+        progress: (event: { current: number; total: number }) => {
+          const percent = Math.round((event.current / event.total) * 100)
+          initEmitter.emit("sqlite", { type: "InProgress", value: percent })
+        },
+      })
+      initEmitter.emit("sqlite", { type: "Done" })
+
+      sqliteDone?.resolve()
+    }
+
+    if (needsMigration) {
       await sqliteDone?.promise
     }
+
+    logger.log("spawning windows sidecar", { url })
+    let startupError: Error | null = null
+    const startup = await (async () => {
+      try {
+        return await spawnLocalServer(hostname, port, password)
+      } catch (error) {
+        startupError = asError(error)
+        logger.error("windows sidecar startup failed", startupError)
+        return undefined
+      }
+    })()
+    server = startup?.listener ?? null
+
+    // Initialize WSL sidecars in parallel; failures do not block app startup.
+    void wslServers.initialize().catch((error) => logger.error("wsl server initialization failed", asError(error)))
 
     if (startup) {
       await Promise.race([
