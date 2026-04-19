@@ -16,6 +16,7 @@ import { Effect } from "effect"
 import {
   batch,
   type Component,
+  createEffect,
   createMemo,
   createResource,
   createSignal,
@@ -49,7 +50,7 @@ import { TerminalProvider } from "@/context/terminal"
 import DirectoryLayout from "@/pages/directory-layout"
 import Layout from "@/pages/layout"
 import { ErrorPage } from "./pages/error"
-import { useCheckServerHealth } from "./utils/server-health"
+import { isPlaceholderServerUrl, useCheckServerHealth } from "./utils/server-health"
 
 const HomeRoute = lazy(() => import("@/pages/home"))
 const loadSession = () => import("@/pages/session")
@@ -166,67 +167,80 @@ function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean }>) {
   const checkServerHealth = useCheckServerHealth()
 
   const [checkMode, setCheckMode] = createSignal<"blocking" | "background">("blocking")
+  const healthTarget = createMemo(() => {
+    const current = server.current
+    if (props.disableHealthCheck || !current) return ""
+    return [
+      ServerConnection.key(current),
+      current.type,
+      current.http.url,
+      current.http.username ?? "",
+      current.http.password ?? "",
+    ].join("\n")
+  })
+
+  createEffect(() => {
+    healthTarget()
+    setCheckMode("blocking")
+  })
 
   // performs repeated health check with a grace period for
   // non-http connections, otherwise fails instantly
-  const [startupHealthCheck, healthCheckActions] = createResource(() =>
-    props.disableHealthCheck
-      ? true
-      : Effect.gen(function* () {
-          if (!server.current) return true
-          const { http, type } = server.current
+  const [startupHealthCheck, healthCheckActions] = createResource(
+    healthTarget,
+    () =>
+      props.disableHealthCheck
+        ? true
+        : Effect.gen(function* () {
+            if (!server.current) return true
+            const { http, type } = server.current
+            if (isPlaceholderServerUrl(http.url)) return false
 
-          while (true) {
-            const res = yield* Effect.promise(() => checkServerHealth(http))
-            if (res.healthy) return true
-            if (checkMode() === "background" || type === "http") return false
-          }
-        }).pipe(
-          Effect.timeoutOrElse({ duration: "10 seconds", orElse: () => Effect.succeed(false) }),
-          Effect.ensuring(Effect.sync(() => setCheckMode("background"))),
-          Effect.runPromise,
-        ),
+            while (true) {
+              const res = yield* Effect.promise(() => checkServerHealth(http))
+              if (res.healthy) return true
+              if (checkMode() === "background" || type === "http") return false
+            }
+          }).pipe(
+            Effect.timeoutOrElse({ duration: "10 seconds", orElse: () => Effect.succeed(false) }),
+            Effect.ensuring(Effect.sync(() => setCheckMode("background"))),
+            Effect.runPromise,
+          ),
+  )
+
+  const splash = (
+    <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base">
+      <Splash class="w-16 h-20 opacity-50 animate-pulse" />
+    </div>
   )
 
   return (
-    <Suspense
-      fallback={
-        <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base">
-          <Splash class="w-16 h-20 opacity-50 animate-pulse" />
-        </div>
-      }
-    >
-      {/*<Show
-        when={checkMode() === "blocking" ? !startupHealthCheck.loading : startupHealthCheck.state !== "pending"}
-        fallback={
-          <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base">
-            <Splash class="w-16 h-20 opacity-50 animate-pulse" />
-          </div>
-        }
-      >*/}
-      {checkMode() === "blocking" ? startupHealthCheck() : startupHealthCheck.latest}
+    <Suspense fallback={splash}>
       <Show
-        when={startupHealthCheck()}
-        fallback={
-          <ConnectionError
-            onRetry={() => {
-              if (checkMode() === "background") void healthCheckActions.refetch()
-            }}
-            onServerSelected={(key) => {
-              void withServerSwitchOverlay(() => {
-                batch(() => {
-                  setCheckMode("blocking")
-                  server.setActive(key)
-                })
-                void healthCheckActions.refetch()
-              })
-            }}
-          />
-        }
+        when={checkMode() === "blocking" ? !startupHealthCheck.loading : startupHealthCheck.state !== "pending"}
+        fallback={splash}
       >
-        {props.children}
+        <Show
+          when={startupHealthCheck()}
+          fallback={
+            <ConnectionError
+              onRetry={() => {
+                if (checkMode() === "background") void healthCheckActions.refetch()
+              }}
+              onServerSelected={(key) => {
+                void withServerSwitchOverlay(() => {
+                  batch(() => {
+                    setCheckMode("blocking")
+                    server.setActive(key)
+                  })
+                })
+              }}
+            />
+          }
+        >
+          {props.children}
+        </Show>
       </Show>
-      {/*</Show>*/}
     </Suspense>
   )
 }

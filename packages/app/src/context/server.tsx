@@ -1,8 +1,8 @@
 import { createSimpleContext } from "@opencode-ai/ui/context"
-import { type Accessor, batch, createEffect, createMemo, onCleanup } from "solid-js"
+import { type Accessor, batch, createEffect, createMemo, onCleanup, untrack } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"
-import { useCheckServerHealth } from "@/utils/server-health"
+import { isPlaceholderServerUrl, useCheckServerHealth } from "@/utils/server-health"
 
 type StoredProject = { worktree: string; expanded: boolean }
 type StoredServer = string | ServerConnection.HttpBase | ServerConnection.Http
@@ -221,19 +221,6 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       })
 
     createEffect(() => {
-      const current_ = current()
-      if (!current_) return
-
-      if (props.disableHealthCheck) {
-        setState("healthy", true)
-        return
-      }
-      setState("healthy", undefined)
-      console.log(`[server health] start polling key=${ServerConnection.key(current_)} url=${current_.http.url}`)
-      onCleanup(startHealthPolling(current_))
-    })
-
-    createEffect(() => {
       const key = state.active
       if (typeof window === "undefined") return
       window.__OPENCODE__ ??= {}
@@ -245,6 +232,29 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
     const current: Accessor<ServerConnection.Any | undefined> = createMemo(
       () => allServers().find((s) => ServerConnection.key(s) === state.active) ?? allServers()[0],
     )
+    const healthTarget = createMemo(() => {
+      const conn = current()
+      if (!conn) return ""
+      return [ServerConnection.key(conn), conn.http.url, conn.http.username ?? "", conn.http.password ?? ""].join("\n")
+    })
+
+    createEffect(() => {
+      healthTarget()
+      const current_ = untrack(current)
+      if (!current_) return
+
+      if (props.disableHealthCheck) {
+        setState("healthy", true)
+        return
+      }
+      if (isPlaceholderServerUrl(current_.http.url)) {
+        setState("healthy", false)
+        return
+      }
+      setState("healthy", undefined)
+      console.log(`[server health] start polling key=${ServerConnection.key(current_)} url=${current_.http.url}`)
+      onCleanup(startHealthPolling(current_))
+    })
 
     createEffect(() => {
       const list = allServers()

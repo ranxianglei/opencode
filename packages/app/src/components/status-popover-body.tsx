@@ -6,7 +6,7 @@ import { Tabs } from "@opencode-ai/ui/tabs"
 import { useMutation } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
 import { useNavigate } from "@solidjs/router"
-import { type Accessor, batch, createEffect, createMemo, For, type JSXElement, onCleanup, Show } from "solid-js"
+import { type Accessor, batch, createEffect, createMemo, For, type JSXElement, onCleanup, Show, untrack } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
 import { useLanguage } from "@/context/language"
@@ -14,7 +14,7 @@ import { usePlatform } from "@/context/platform"
 import { useSDK } from "@/context/sdk"
 import { ServerConnection, useServer } from "@/context/server"
 import { useSync } from "@/context/sync"
-import { useCheckServerHealth, type ServerHealth } from "@/utils/server-health"
+import { isPlaceholderServerUrl, useCheckServerHealth, type ServerHealth } from "@/utils/server-health"
 import { withServerSwitchOverlay } from "@/utils/server-switch"
 
 const pollMs = 10_000
@@ -56,13 +56,23 @@ const listServersByHealth = (
 const useServerHealth = (servers: Accessor<ServerConnection.Any[]>, enabled: Accessor<boolean>) => {
   const checkServerHealth = useCheckServerHealth()
   const [status, setStatus] = createStore({} as Record<ServerConnection.Key, ServerHealth | undefined>)
+  const pollKey = createMemo(() =>
+    enabled()
+      ? servers()
+          .map((conn) =>
+            [ServerConnection.key(conn), conn.http.url, conn.http.username ?? "", conn.http.password ?? ""].join("\n"),
+          )
+          .join("\n\n")
+      : "",
+  )
 
   createEffect(() => {
     if (!enabled()) {
       setStatus(reconcile({}))
       return
     }
-    const list = servers()
+    pollKey()
+    const list = untrack(servers)
     let dead = false
 
     const refresh = async () => {
@@ -277,7 +287,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
               <For each={sortedServers()}>
                 {(s) => {
                   const key = ServerConnection.key(s)
-                  const blocked = () => health[key]?.healthy === false
+                  const blocked = () => isPlaceholderServerUrl(s.http.url) || health[key]?.healthy === false
                   return (
                     <button
                       type="button"
