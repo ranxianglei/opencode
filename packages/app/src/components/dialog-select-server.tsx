@@ -8,14 +8,15 @@ import { List } from "@opencode-ai/ui/list"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { useMutation } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
-import { batch, createEffect, createMemo, createResource, onCleanup, Show, untrack } from "solid-js"
+import { batch, createEffect, createMemo, onCleanup, Show, startTransition, untrack } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { DialogWslServer } from "@/components/dialog-wsl-server"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
+import { useDefaultServer } from "@/context/default-server"
 import { useLanguage } from "@/context/language"
-import type { WslServersState } from "@/context/platform"
 import { usePlatform } from "@/context/platform"
 import { normalizeServerUrl, ServerConnection, useServer } from "@/context/server"
+import { useWslServers } from "@/context/wsl-servers"
 import { isPlaceholderServerUrl, type ServerHealth, useCheckServerHealth } from "@/utils/server-health"
 import { withServerSwitchOverlay } from "@/utils/server-switch"
 
@@ -73,36 +74,6 @@ function showRequestError(language: ReturnType<typeof useLanguage>, err: unknown
     title: language.t("common.requestFailed"),
     description: err instanceof Error ? err.message : String(err),
   })
-}
-
-function useDefaultServer() {
-  const language = useLanguage()
-  const platform = usePlatform()
-  const [defaultKey, defaultUrlActions] = createResource(
-    async () => {
-      try {
-        const key = await platform.getDefaultServer?.()
-        if (!key) return null
-        return key
-      } catch (err) {
-        showRequestError(language, err)
-        return null
-      }
-    },
-    { initialValue: null },
-  )
-
-  const canDefault = createMemo(() => !!platform.getDefaultServer && !!platform.setDefaultServer)
-  const setDefault = async (key: ServerConnection.Key | null) => {
-    try {
-      await platform.setDefaultServer?.(key)
-      defaultUrlActions.mutate(key)
-    } catch (err) {
-      showRequestError(language, err)
-    }
-  }
-
-  return { defaultKey, canDefault, setDefault }
 }
 
 function useServerPreview() {
@@ -208,11 +179,11 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   const platform = usePlatform()
   const language = useLanguage()
   const { defaultKey, canDefault, setDefault } = useDefaultServer()
+  const wslServers = useWslServers()
   const { previewStatus } = useServerPreview()
   const checkServerHealth = useCheckServerHealth()
   const [store, setStore] = createStore({
     status: {} as Record<ServerConnection.Key, ServerHealth | undefined>,
-    wslState: undefined as WslServersState | undefined,
     addServer: {
       url: "",
       name: "",
@@ -329,6 +300,32 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     },
   }))
 
+  const removeWslMutation = useMutation(() => ({
+    mutationFn: async (key: ServerConnection.Key) => {
+      await platform.wslServers?.removeServer(key)
+      return key
+    },
+    onSuccess: async (key) => {
+      server.remove(key)
+      if (defaultKey() === key) await setDefault(null)
+    },
+    onError: (err) => showRequestError(language, err),
+  }))
+
+  const retryWslMutation = useMutation(() => ({
+    mutationFn: async (key: ServerConnection.Key) => {
+      await platform.wslServers?.startServer(key)
+    },
+    onError: (err) => showRequestError(language, err),
+  }))
+
+  const updateWslMutation = useMutation(() => ({
+    mutationFn: async (distro: string) => {
+      await platform.wslServers?.installOpencode(distro)
+    },
+    onError: (err) => showRequestError(language, err),
+  }))
+
   const replaceServer = (original: ServerConnection.Http, next: ServerConnection.Http) => {
     const active = server.key
     const newConn = server.add(next)
@@ -347,7 +344,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   })
 
   const current = createMemo(() => items().find((x) => ServerConnection.key(x) === server.key) ?? items()[0])
-  let resolvePendingWslSelection: VoidFunction | undefined
+  const wslState = () => wslServers.data
   const healthPollKey = createMemo(() =>
     items()
       .map((conn) =>
@@ -359,7 +356,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   const isSelectable = (conn: ServerConnection.Any) => !isPlaceholderServerUrl(conn.http.url)
   const wslRuntime = (conn: ServerConnection.Any) => {
     if (conn.type !== "sidecar" || conn.variant !== "wsl") return
-    return store.wslState?.servers.find((item) => item.config.id === ServerConnection.key(conn))?.runtime
+    return wslState()?.servers.find((item) => item.config.id === ServerConnection.key(conn))?.runtime
   }
   const canRetryWsl = (conn: ServerConnection.Any) => {
     const runtime = wslRuntime(conn)
@@ -406,32 +403,9 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     onCleanup(() => clearInterval(interval))
   })
 
-  createEffect(() => {
-    const api = platform.wslServers
-    if (!api) return
-    let dead = false
-    void api
-      .getState()
-      .then((state) => {
-        if (dead) return
-        setStore("wslState", reconcile(state))
-      })
-      .catch((err) => {
-        if (dead) return
-        showRequestError(language, err)
-      })
-    const off = api.subscribe((event) => {
-      setStore("wslState", reconcile(event.state))
-    })
-    onCleanup(() => {
-      dead = true
-      off()
-    })
-  })
-
   const wslCheck = (conn: ServerConnection.Any) => {
     if (conn.type !== "sidecar" || conn.variant !== "wsl") return null
-    return store.wslState?.opencodeChecks[conn.distro] ?? null
+    return wslState()?.opencodeChecks[conn.distro] ?? null
   }
 
   const displayVersion = (conn: ServerConnection.Any) => {
@@ -441,34 +415,35 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
 
   async function select(conn: ServerConnection.Any, persist?: boolean) {
     if (!isSelectable(conn)) return
-    if (!persist && store.status[ServerConnection.key(conn)]?.healthy === false) return
+    if (!persist && health(ServerConnection.key(conn))?.healthy === false) return
     const nextKey = ServerConnection.key(conn)
     const changed = server.key !== nextKey
 
-    const apply = () => {
-      dialog.close()
-      if (persist && conn.type === "http") {
-        server.add(conn)
-        if (changed && typeof window !== "undefined" && window.history?.replaceState) {
-          window.history.replaceState(null, "", "/")
-        } else {
-          props.onNavigateHome?.()
-        }
+    const navigateHome = () => {
+      if (changed && typeof window !== "undefined" && window.history?.replaceState) {
+        window.history.replaceState(null, "", "/")
         return
       }
-
-      batch(() => {
-        if (changed && typeof window !== "undefined" && window.history?.replaceState) {
-          window.history.replaceState(null, "", "/")
-        } else {
-          props.onNavigateHome?.()
-        }
-        server.setActive(nextKey)
-      })
+      props.onNavigateHome?.()
     }
 
+    const apply = () =>
+      startTransition(() => {
+        dialog.close()
+        if (persist && conn.type === "http") {
+          server.add(conn)
+          navigateHome()
+          return
+        }
+
+        batch(() => {
+          navigateHome()
+          server.setActive(nextKey)
+        })
+      })
+
     if (!changed) {
-      apply()
+      await apply()
       return
     }
 
@@ -480,10 +455,8 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     if (!key) return
     const conn = items().find((item) => ServerConnection.key(item) === key)
     if (!conn || !isSelectable(conn)) return
-    const resolve = resolvePendingWslSelection
-    resolvePendingWslSelection = undefined
     setStore("addWsl", "pendingSelectKey", undefined)
-    void select(conn).finally(() => resolve?.())
+    void select(conn)
   })
 
   const handleAddChange = (value: string) => {
@@ -559,8 +532,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   const resetForm = () => {
     resetAdd()
     resetEdit()
-    resolvePendingWslSelection?.()
-    resolvePendingWslSelection = undefined
     setStore("addWsl", "pendingSelectKey", undefined)
     setStore("addWsl", "showWizard", false)
   }
@@ -589,7 +560,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
       username: conn.http.username ?? "",
       password: conn.http.password ?? "",
       error: "",
-      status: store.status[ServerConnection.key(conn)]?.healthy,
+      status: health(ServerConnection.key(conn))?.healthy,
     })
   }
 
@@ -602,15 +573,13 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
 
   const handleAddedWsl = async (distro: string) => {
     const key = ServerConnection.Key.make(`wsl:${distro}`)
+    setStore("addWsl", "showWizard", false)
+    setStore("addWsl", "pendingSelectKey", key)
     const conn = items().find((item) => ServerConnection.key(item) === key)
     if (conn && isSelectable(conn)) {
       await select(conn)
-      return
+      setStore("addWsl", "pendingSelectKey", undefined)
     }
-    await new Promise<void>((resolve) => {
-      resolvePendingWslSelection = resolve
-      setStore("addWsl", "pendingSelectKey", key)
-    })
   }
 
   const submitForm = () => {
@@ -657,44 +626,22 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
 
   async function handleRemove(key: ServerConnection.Key) {
     server.remove(key)
-    if ((await platform.getDefaultServer?.()) === key) {
-      void platform.setDefaultServer?.(null)
-    }
+    if (defaultKey() === key) await setDefault(null)
   }
 
-  async function handleRemoveWsl(conn: ServerConnection.Any) {
+  function handleRemoveWsl(conn: ServerConnection.Any) {
     if (conn.type !== "sidecar" || conn.variant !== "wsl") return
-    const key = ServerConnection.key(conn)
-    try {
-      await platform.wslServers?.removeServer(key)
-      server.remove(key)
-      if ((await platform.getDefaultServer?.()) === key) {
-        void platform.setDefaultServer?.(null)
-      }
-    } catch (err) {
-      showRequestError(language, err)
-    }
+    removeWslMutation.mutate(ServerConnection.key(conn))
   }
 
-  async function handleRetryWsl(conn: ServerConnection.Any) {
+  function handleRetryWsl(conn: ServerConnection.Any) {
     if (conn.type !== "sidecar" || conn.variant !== "wsl") return
-    try {
-      await platform.wslServers?.startServer(ServerConnection.key(conn))
-    } catch (err) {
-      showRequestError(language, err)
-    }
+    retryWslMutation.mutate(ServerConnection.key(conn))
   }
 
-  async function handleUpdateWsl(conn: ServerConnection.Any) {
+  function handleUpdateWsl(conn: ServerConnection.Any) {
     if (conn.type !== "sidecar" || conn.variant !== "wsl") return
-    const api = platform.wslServers
-    if (!api) return
-    try {
-      await api.installOpencode(conn.distro)
-      await refreshHealth()
-    } catch (err) {
-      showRequestError(language, err)
-    }
+    updateWslMutation.mutate(conn.distro)
   }
 
   return (
@@ -753,7 +700,9 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
               const isWslSidecar = i.type === "sidecar" && i.variant === "wsl"
               const wslDistro = i.type === "sidecar" && i.variant === "wsl" ? i.distro : undefined
               const blocked = () => !isSelectable(i) || health(key)?.healthy === false
-              const hasMenuActionsBeforeDelete = () => i.type === "http" || (isWslSidecar && canRetryWsl(i))
+              const canChangeDefault = () => canDefault() && i.type !== "ssh"
+              const canRemove = () => i.type === "http" || isWslSidecar
+              const hasMenuActionsBeforeDelete = () => canRemove() && (i.type === "http" || canChangeDefault() || canRetryWsl(i))
               const outdated = () => {
                 const check = wslCheck(i)
                 return versionOlderThan(check?.version, check?.expectedVersion)
@@ -765,8 +714,10 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                 if (outdated()) return "Update OpenCode"
                 return null
               }
-              const updating = () =>
-                store.wslState?.job?.kind === "install-opencode" && store.wslState.job.distro === wslDistro
+              const updating = () => {
+                const job = wslState()?.job
+                return job?.kind === "install-opencode" && job.distro === wslDistro
+              }
               return (
                 <div class="flex items-center gap-3 min-w-0 flex-1 w-full group/item">
                   <div class="flex flex-col h-full items-start w-5">
@@ -793,12 +744,12 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                         <Button
                           variant="secondary"
                           size="small"
-                          disabled={!!store.wslState?.job}
+                          disabled={!!wslState()?.job}
                           class="shrink-0"
                           onPointerDown={(e: PointerEvent) => e.stopPropagation()}
                           onClick={(e: MouseEvent) => {
                             e.stopPropagation()
-                            void handleUpdateWsl(i)
+                            handleUpdateWsl(i)
                           }}
                         >
                           {updating() ? "Updating OpenCode..." : label()}
@@ -809,7 +760,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                       <Icon name="check" class="h-6" />
                     </Show>
 
-                    <Show when={i.type === "http" || isWslSidecar}>
+                    <Show when={i.type === "http" || i.type === "sidecar"}>
                       <DropdownMenu>
                         <DropdownMenu.Trigger
                           as={IconButton}
@@ -832,19 +783,19 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                               </DropdownMenu.Item>
                             </Show>
                             <Show when={isWslSidecar && canRetryWsl(i)}>
-                              <DropdownMenu.Item onSelect={() => void handleRetryWsl(i)}>
+                              <DropdownMenu.Item onSelect={() => handleRetryWsl(i)}>
                                 <DropdownMenu.ItemLabel>Retry start</DropdownMenu.ItemLabel>
                               </DropdownMenu.Item>
                             </Show>
-                            <Show when={i.type === "http" && canDefault() && defaultKey() !== key}>
-                              <DropdownMenu.Item onSelect={() => setDefault(key)}>
+                            <Show when={canChangeDefault() && defaultKey() !== key}>
+                              <DropdownMenu.Item onSelect={() => void setDefault(key)}>
                                 <DropdownMenu.ItemLabel>
                                   {language.t("dialog.server.menu.default")}
                                 </DropdownMenu.ItemLabel>
                               </DropdownMenu.Item>
                             </Show>
-                            <Show when={i.type === "http" && canDefault() && defaultKey() === key}>
-                              <DropdownMenu.Item onSelect={() => setDefault(null)}>
+                            <Show when={canChangeDefault() && defaultKey() === key}>
+                              <DropdownMenu.Item onSelect={() => void setDefault(null)}>
                                 <DropdownMenu.ItemLabel>
                                   {language.t("dialog.server.menu.defaultRemove")}
                                 </DropdownMenu.ItemLabel>
@@ -853,9 +804,15 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                             <Show when={hasMenuActionsBeforeDelete()}>
                               <DropdownMenu.Separator />
                             </Show>
-                            <Show when={i.type === "http" || isWslSidecar}>
+                            <Show when={canRemove()}>
                               <DropdownMenu.Item
-                                onSelect={() => (isWslSidecar ? void handleRemoveWsl(i) : handleRemove(key))}
+                                onSelect={() => {
+                                  if (isWslSidecar) {
+                                    handleRemoveWsl(i)
+                                    return
+                                  }
+                                  void handleRemove(key)
+                                }}
                                 class="text-text-on-critical-base hover:bg-surface-critical-weak"
                               >
                                 <DropdownMenu.ItemLabel>

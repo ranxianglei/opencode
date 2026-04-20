@@ -6,11 +6,11 @@ import { Tabs } from "@opencode-ai/ui/tabs"
 import { useMutation } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
 import { useNavigate } from "@solidjs/router"
-import { type Accessor, batch, createEffect, createMemo, For, type JSXElement, onCleanup, Show, untrack } from "solid-js"
+import { type Accessor, batch, createEffect, createMemo, For, type JSXElement, onCleanup, Show, startTransition, untrack } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
+import { useDefaultServer } from "@/context/default-server"
 import { useLanguage } from "@/context/language"
-import { usePlatform } from "@/context/platform"
 import { useSDK } from "@/context/sdk"
 import { ServerConnection, useServer } from "@/context/server"
 import { useSync } from "@/context/sync"
@@ -97,49 +97,6 @@ const useServerHealth = (servers: Accessor<ServerConnection.Any[]>, enabled: Acc
   return status
 }
 
-const useDefaultServerKey = (
-  get: (() => string | Promise<string | null | undefined> | null | undefined) | undefined,
-) => {
-  const [state, setState] = createStore({
-    key: undefined as ServerConnection.Key | undefined,
-    tick: 0,
-  })
-
-  createEffect(() => {
-    state.tick
-    let dead = false
-    const result = get?.()
-    if (!result) {
-      setState("key", undefined)
-      onCleanup(() => {
-        dead = true
-      })
-      return
-    }
-
-    if (result instanceof Promise) {
-      void result.then((next) => {
-        if (dead) return
-        setState("key", next ? ServerConnection.Key.make(next) : undefined)
-      })
-      onCleanup(() => {
-        dead = true
-      })
-      return
-    }
-
-    setState("key", ServerConnection.Key.make(result))
-    onCleanup(() => {
-      dead = true
-    })
-  })
-
-  return {
-    key: () => state.key,
-    refresh: () => setState("tick", (value) => value + 1),
-  }
-}
-
 const useMcpToggleMutation = () => {
   const sync = useSync()
   const sdk = useSDK()
@@ -165,11 +122,11 @@ const useMcpToggleMutation = () => {
 export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   const sync = useSync()
   const server = useServer()
-  const platform = usePlatform()
   const dialog = useDialog()
   const language = useLanguage()
   const navigate = useNavigate()
   const sdk = useSDK()
+  const defaultServer = useDefaultServer()
 
   const [load, setLoad] = createStore({
     lspDone: false,
@@ -240,7 +197,6 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   const health = useServerHealth(servers, props.shown)
   const sortedServers = createMemo(() => listServersByHealth(servers(), server.key, health))
   const toggleMcp = useMcpToggleMutation()
-  const defaultServer = useDefaultServerKey(platform.getDefaultServer)
   const mcpNames = createMemo(() => Object.keys(sync.data.mcp ?? {}).sort((a, b) => a.localeCompare(b)))
   const mcpStatus = (name: string) => sync.data.mcp?.[name]?.status
   const mcpConnected = createMemo(() => mcpNames().filter((name) => mcpStatus(name) === "connected").length)
@@ -296,23 +252,25 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
                         "hover:bg-surface-raised-base-hover": !blocked(),
                         "cursor-not-allowed": blocked(),
                       }}
-                      aria-disabled={blocked()}
-                      onClick={() => {
-                        if (blocked()) return
-                        void withServerSwitchOverlay(() => {
-                          batch(() => {
-                            if (server.key !== key) {
-                              if (typeof window !== "undefined" && window.history?.replaceState) {
-                                window.history.replaceState(null, "", "/")
-                              }
-                            } else {
-                              navigate("/")
-                            }
-                            server.setActive(key)
-                          })
-                        })
-                      }}
-                    >
+                       aria-disabled={blocked()}
+                       onClick={() => {
+                         if (blocked()) return
+                         void withServerSwitchOverlay(() =>
+                           startTransition(() => {
+                             batch(() => {
+                               if (server.key !== key) {
+                                 if (typeof window !== "undefined" && window.history?.replaceState) {
+                                   window.history.replaceState(null, "", "/")
+                                 }
+                               } else {
+                                 navigate("/")
+                               }
+                               server.setActive(key)
+                             })
+                           }),
+                         )
+                       }}
+                     >
                       <ServerHealthIndicator health={health[key]} />
                       <ServerRow
                         conn={s}
@@ -322,7 +280,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
                         nameClass="text-14-regular text-text-base truncate"
                         versionClass="text-12-regular text-text-weak truncate"
                         badge={
-                          <Show when={key === defaultServer.key()}>
+                          <Show when={key === defaultServer.defaultKey()}>
                             <span class="text-11-regular text-text-base bg-surface-base px-1.5 py-0.5 rounded-md">
                               {language.t("common.default")}
                             </span>
@@ -348,7 +306,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
                     if (dialogDead || dialogRun !== run) return
                     dialog.show(
                       () => <x.DialogSelectServer onNavigateHome={() => navigate("/")} />,
-                      defaultServer.refresh,
+                      () => void defaultServer.query.refetch(),
                     )
                   })
                 }}

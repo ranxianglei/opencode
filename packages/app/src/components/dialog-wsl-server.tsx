@@ -1,12 +1,14 @@
 import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Spinner } from "@opencode-ai/ui/spinner"
+import { useMutation } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
-import { createEffect, createMemo, For, Match, onCleanup, Show, Switch } from "solid-js"
-import { createStore, reconcile } from "solid-js/store"
+import { createEffect, createMemo, For, Match, Show, Switch } from "solid-js"
+import { createStore } from "solid-js/store"
 import { useLanguage } from "@/context/language"
-import type { WslServerStep, WslServersState } from "@/context/platform"
+import type { WslServerStep } from "@/context/platform"
 import { usePlatform } from "@/context/platform"
+import { useWslServers } from "@/context/wsl-servers"
 
 const STEPS: WslServerStep[] = ["wsl", "distro", "opencode"]
 
@@ -30,42 +32,15 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
   const language = useLanguage()
   const platform = usePlatform()
   const dialog = useDialog()
+  const wslServers = useWslServers()
   const [store, setStore] = createStore({
-    state: undefined as WslServersState | undefined,
-    loading: true,
     step: undefined as WslServerStep | undefined,
     selectedDistro: null as string | null,
     installTarget: undefined as string | undefined,
     adding: false,
   })
-
-  createEffect(() => {
-    const wslServers = platform.wslServers
-    if (!wslServers) return
-    let mounted = true
-    void wslServers
-      .getState()
-      .then((state) => {
-        if (!mounted) return
-        setStore({ state, loading: false })
-      })
-      .catch((err) => {
-        if (!mounted) return
-        requestError(language, err)
-        setStore("loading", false)
-      })
-    const off = wslServers.subscribe((event) => {
-      setStore("state", reconcile(event.state))
-      setStore("loading", false)
-    })
-    onCleanup(() => {
-      mounted = false
-      off()
-    })
-  })
-
-  const current = () => store.state
-  const wslServers = () => platform.wslServers
+  const current = () => wslServers.data
+  const wslApi = () => platform.wslServers
   const busy = createMemo(() => !!current()?.job || store.adding)
   const selectedDistro = () => store.selectedDistro
   const selectedProbe = createMemo(() => {
@@ -156,22 +131,94 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
   // them back when a probe result updates recommendedStep.
   const activeStep = createMemo(() => store.step ?? recommendedStep())
 
+  const probeRuntimeMutation = useMutation(() => ({
+    mutationFn: async () => {
+      const api = wslApi()
+      if (!api) return
+      await api.probeRuntime()
+    },
+  }))
+
+  const refreshDistrosMutation = useMutation(() => ({
+    mutationFn: async () => {
+      const api = wslApi()
+      if (!api) return
+      await api.refreshDistros()
+    },
+  }))
+
+  const installWslMutation = useMutation(() => ({
+    mutationFn: async () => {
+      const api = wslApi()
+      if (!api) return
+      await api.installWsl()
+    },
+  }))
+
+  const installDistroMutation = useMutation(() => ({
+    mutationFn: async (name: string) => {
+      const api = wslApi()
+      if (!api) return
+      await api.installDistro(name)
+    },
+  }))
+
+  const probeDistroMutation = useMutation(() => ({
+    mutationFn: async (name: string) => {
+      const api = wslApi()
+      if (!api) return
+      await api.probeDistro(name)
+    },
+  }))
+
+  const probeOpencodeMutation = useMutation(() => ({
+    mutationFn: async (name: string) => {
+      const api = wslApi()
+      if (!api) return
+      await api.probeOpencode(name)
+    },
+  }))
+
+  const installOpencodeMutation = useMutation(() => ({
+    mutationFn: async (name: string) => {
+      const api = wslApi()
+      if (!api) return
+      await api.installOpencode(name)
+    },
+  }))
+
+  const openTerminalMutation = useMutation(() => ({
+    mutationFn: async (name: string) => {
+      const api = wslApi()
+      if (!api) return
+      await api.openTerminal(name)
+    },
+  }))
+
+  const addServerMutation = useMutation(() => ({
+    mutationFn: async (distro: string) => {
+      const api = wslApi()
+      if (!api) return
+      return api.addServer(distro)
+    },
+  }))
+
   const autoProbe = createMemo(() => {
     const state = current()
-    if (!state || !wslServers() || busy()) return null
+    if (!state || !wslApi() || busy()) return null
     if (state.pendingRestart) return null
-    if (!state.runtime) return { key: "runtime", run: () => wslServers()!.probeRuntime() }
+    if (!state.runtime) return { key: "runtime", run: () => probeRuntimeMutation.mutateAsync() }
     if (!wslReady()) return null
     if (!state.installed.length && !state.online.length) {
-      return { key: "distros", run: () => wslServers()!.refreshDistros() }
+      return { key: "distros", run: () => refreshDistrosMutation.mutateAsync() }
     }
     const distro = selectedDistro()
     if (distro && !state.distroProbes[distro]) {
-      return { key: `probe-distro:${distro}`, run: () => wslServers()!.probeDistro(distro) }
+      return { key: `probe-distro:${distro}`, run: () => probeDistroMutation.mutateAsync(distro) }
     }
     if (!distro || !distroReady()) return null
     if (!state.opencodeChecks[distro]) {
-      return { key: `probe-opencode:${distro}`, run: () => wslServers()!.probeOpencode(distro) }
+      return { key: `probe-opencode:${distro}`, run: () => probeOpencodeMutation.mutateAsync(distro) }
     }
     return null
   })
@@ -278,11 +325,9 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
   const finish = async () => {
     const distro = selectedDistro()
     if (!distro) return
-    const api = wslServers()
-    if (!api) return
     setStore("adding", true)
     try {
-      await api.addServer(distro)
+      await addServerMutation.mutateAsync(distro)
       if (props.onAdded) {
         await props.onAdded(distro)
       } else {
@@ -309,32 +354,38 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
       locked: stepIndex(step) > stepIndex(recommendedStep()),
     })),
   )
+  const loadError = createMemo(() => {
+    const error = wslServers.error
+    if (!error) return "Failed to load WSL state."
+    return error instanceof Error ? error.message : String(error)
+  })
 
   return (
     <div class="px-5 pb-5 flex flex-col gap-4">
-      <Show when={!store.loading} fallback={<div class="px-1 py-6 text-14-regular text-text-weak">Loading...</div>}>
-        <div class="flex gap-2 pb-1">
-          <For each={steps()}>
-            {(item) => (
-              <button
-                type="button"
-                class="basis-0 flex-1 min-w-0 rounded-md border px-3 py-2 text-left transition-colors"
-                classList={{
-                  "border-border-strong-base bg-surface-base-hover": item.state === "current",
-                  "border-icon-success-base/40 bg-surface-base": item.state === "done",
-                  "border-border-weak-base bg-background-base opacity-60": item.state === "locked",
-                  "border-icon-warning-base/40 bg-surface-base": item.state === "warning",
-                }}
-                disabled={item.locked}
-                onClick={() => setStore("step", item.step)}
-              >
-                <div class="text-13-medium text-text-strong">{item.title}</div>
-              </button>
-            )}
-          </For>
-        </div>
+      <Show when={!wslServers.isPending} fallback={<div class="px-1 py-6 text-14-regular text-text-weak">Loading...</div>}>
+        <Show when={!wslServers.isError} fallback={<div class="px-1 py-6 text-14-regular text-text-weak">{loadError()}</div>}>
+          <div class="flex gap-2 pb-1">
+            <For each={steps()}>
+              {(item) => (
+                <button
+                  type="button"
+                  class="basis-0 flex-1 min-w-0 rounded-md border px-3 py-2 text-left transition-colors"
+                  classList={{
+                    "border-border-strong-base bg-surface-base-hover": item.state === "current",
+                    "border-icon-success-base/40 bg-surface-base": item.state === "done",
+                    "border-border-weak-base bg-background-base opacity-60": item.state === "locked",
+                    "border-icon-warning-base/40 bg-surface-base": item.state === "warning",
+                  }}
+                  disabled={item.locked}
+                  onClick={() => setStore("step", item.step)}
+                >
+                  <div class="text-13-medium text-text-strong">{item.title}</div>
+                </button>
+              )}
+            </For>
+          </div>
 
-        <Switch>
+          <Switch>
           <Match when={activeStep() === "wsl"}>
             <div class="rounded-md bg-surface-base p-4 flex flex-col gap-3">
               <div class="flex items-center justify-between gap-3">
@@ -344,7 +395,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                     variant="secondary"
                     size="large"
                     disabled={busy()}
-                    onClick={() => void run(() => wslServers()!.installWsl())}
+                    onClick={() => void run(() => installWslMutation.mutateAsync())}
                   >
                     Install WSL
                   </Button>
@@ -355,7 +406,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                 <div class="rounded-md border border-border-weak-base px-3 py-3 flex items-center justify-between gap-3">
                   <div class="text-12-regular text-text-warning-base">Windows restart required.</div>
                   <Button variant="secondary" size="large" onClick={() => void platform.restart()}>
-                    Restart OpenCode
+                    Relaunch OpenCode
                   </Button>
                 </div>
               </Show>
@@ -369,7 +420,23 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
 
           <Match when={activeStep() === "distro"}>
             <div class="rounded-md bg-surface-base p-4 flex flex-col gap-3">
-              <div class="text-14-medium text-text-strong">Choose a distro</div>
+              <div class="flex items-center justify-between gap-3">
+                <div class="text-14-medium text-text-strong">Choose a distro</div>
+                <Show when={selectedDistro()}>
+                  <Button
+                    variant="ghost"
+                    size="small"
+                    disabled={busy()}
+                    onClick={() => {
+                      const distro = selectedDistro()
+                      if (!distro) return
+                      void run(() => probeDistroMutation.mutateAsync(distro))
+                    }}
+                  >
+                    Refresh
+                  </Button>
+                </Show>
+              </div>
               <div class="text-12-regular text-text-weak whitespace-pre-wrap break-words">{distroMessage()}</div>
 
               <div class="flex flex-col gap-2">
@@ -420,7 +487,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                         variant="secondary"
                         size="small"
                         disabled={busy() || !installTarget()}
-                        onClick={() => void run(() => wslServers()!.installDistro(installTarget()!.name))}
+                        onClick={() => void run(() => installDistroMutation.mutateAsync(installTarget()!.name))}
                       >
                         {installingDistro() ? "Installing..." : "Install"}
                       </Button>
@@ -488,18 +555,32 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                 </div>
               </Show>
 
-              <Button
-                variant="secondary"
-                size="large"
-                disabled={busy() || !selectedInstalled()}
-                onClick={() => {
-                  const distro = selectedDistro()
-                  if (!distro) return
-                  void run(() => wslServers()!.openTerminal(distro))
-                }}
-              >
-                Open terminal
-              </Button>
+              <div class="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="large"
+                  disabled={busy() || !selectedInstalled()}
+                  onClick={() => {
+                    const distro = selectedDistro()
+                    if (!distro) return
+                    void run(() => openTerminalMutation.mutateAsync(distro))
+                  }}
+                >
+                  Open terminal
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="large"
+                  disabled={busy() || !selectedDistro()}
+                  onClick={() => {
+                    const distro = selectedDistro()
+                    if (!distro) return
+                    void run(() => probeDistroMutation.mutateAsync(distro))
+                  }}
+                >
+                  Refresh
+                </Button>
+              </div>
 
               <div class="flex items-center justify-end">
                 <Button
@@ -518,20 +599,36 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
             <div class="rounded-md bg-surface-base p-4 flex flex-col gap-3">
               <div class="flex items-center justify-between gap-3">
                 <div class="text-14-medium text-text-strong">OpenCode</div>
-                <Show when={!opencodeReady() || opencodeCheck()?.matchesDesktop === false}>
-                  <Button
-                    variant="secondary"
-                    size="large"
-                    disabled={busy()}
-                    onClick={() => {
-                      const distro = selectedDistro()
-                      if (!distro) return
-                      void run(() => wslServers()!.installOpencode(distro))
-                    }}
-                  >
-                    {opencodeCheck()?.resolvedPath ? "Update OpenCode" : "Install OpenCode"}
-                  </Button>
-                </Show>
+                <div class="flex items-center gap-2">
+                  <Show when={selectedDistro()}>
+                    <Button
+                      variant="ghost"
+                      size="large"
+                      disabled={busy()}
+                      onClick={() => {
+                        const distro = selectedDistro()
+                        if (!distro) return
+                        void run(() => probeOpencodeMutation.mutateAsync(distro))
+                      }}
+                    >
+                      Refresh
+                    </Button>
+                  </Show>
+                  <Show when={!opencodeReady() || opencodeCheck()?.matchesDesktop === false}>
+                    <Button
+                      variant="secondary"
+                      size="large"
+                      disabled={busy()}
+                      onClick={() => {
+                        const distro = selectedDistro()
+                        if (!distro) return
+                        void run(() => installOpencodeMutation.mutateAsync(distro))
+                      }}
+                    >
+                      {opencodeCheck()?.resolvedPath ? "Update OpenCode" : "Install OpenCode"}
+                    </Button>
+                  </Show>
+                </div>
               </div>
               <div class="text-12-regular text-text-weak whitespace-pre-wrap break-words">{opencodeMessage()}</div>
               <Show when={opencodeMismatchCheck()}>
@@ -552,58 +649,59 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
               </Show>
             </div>
           </Match>
-        </Switch>
+          </Switch>
 
-        <Show when={installProgress()}>
-          {(progress) => (
+          <Show when={installProgress()}>
+            {(progress) => (
+              <div class="rounded-md bg-surface-base p-4 flex flex-col gap-2">
+                <div class="flex items-center gap-2 text-14-medium text-text-strong">
+                  <Spinner class="h-4 w-4 text-icon-info-base shrink-0" />
+                  <div>Progress</div>
+                </div>
+                <div class="text-12-regular text-text-weak whitespace-pre-wrap break-words">{progress().title}</div>
+                <div class="rounded-md border border-border-weak-base bg-background-base px-3 py-2 font-mono text-12-regular whitespace-pre-wrap break-words">
+                  <For
+                    each={
+                      progress().lines.length
+                        ? progress().lines
+                        : [{ stream: "system" as const, text: "Waiting for output...", at: 0 }]
+                    }
+                  >
+                    {(line) => (
+                      <div
+                        classList={{
+                          "text-text-warning-base": line.stream === "stderr",
+                          "text-text-weak": line.stream !== "stderr",
+                        }}
+                      >
+                        {line.text}
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </div>
+            )}
+          </Show>
+
+          <Show when={current()?.lastError && (current()?.transcript.length ?? 0) > 0}>
             <div class="rounded-md bg-surface-base p-4 flex flex-col gap-2">
-              <div class="flex items-center gap-2 text-14-medium text-text-strong">
-                <Spinner class="h-4 w-4 text-icon-info-base shrink-0" />
-                <div>Progress</div>
-              </div>
-              <div class="text-12-regular text-text-weak whitespace-pre-wrap break-words">{progress().title}</div>
-              <div class="rounded-md border border-border-weak-base bg-background-base px-3 py-2 font-mono text-12-regular whitespace-pre-wrap break-words">
-                <For
-                  each={
-                    progress().lines.length
-                      ? progress().lines
-                      : [{ stream: "system" as const, text: "Waiting for output...", at: 0 }]
-                  }
-                >
-                  {(line) => (
-                    <div
-                      classList={{
-                        "text-text-warning-base": line.stream === "stderr",
-                        "text-text-weak": line.stream !== "stderr",
-                      }}
-                    >
-                      {line.text}
-                    </div>
-                  )}
-                </For>
+              <div class="text-14-medium text-text-strong">Diagnostics</div>
+              <div class="rounded-md border border-border-weak-base bg-background-base px-3 py-2 font-mono text-12-regular text-text-weak whitespace-pre-wrap break-words">
+                <For each={current()?.transcript ?? []}>{(line) => <div>{line.text}</div>}</For>
               </div>
             </div>
-          )}
-        </Show>
+          </Show>
 
-        <Show when={current()?.lastError && (current()?.transcript.length ?? 0) > 0}>
-          <div class="rounded-md bg-surface-base p-4 flex flex-col gap-2">
-            <div class="text-14-medium text-text-strong">Diagnostics</div>
-            <div class="rounded-md border border-border-weak-base bg-background-base px-3 py-2 font-mono text-12-regular text-text-weak whitespace-pre-wrap break-words">
-              <For each={current()?.transcript ?? []}>{(line) => <div>{line.text}</div>}</For>
+          <Show when={activeStep() === "opencode" && allReady() && selectedDistro()}>
+            <div class="flex items-center justify-end gap-2">
+              <Button variant="ghost" size="large" disabled={store.adding} onClick={() => dialog.close()}>
+                Cancel
+              </Button>
+              <Button variant="primary" size="large" disabled={store.adding || busy()} onClick={() => void finish()}>
+                {store.adding ? "Adding..." : "Add WSL server"}
+              </Button>
             </div>
-          </div>
-        </Show>
-
-        <Show when={activeStep() === "opencode" && allReady() && selectedDistro()}>
-          <div class="flex items-center justify-end gap-2">
-            <Button variant="ghost" size="large" disabled={store.adding} onClick={() => dialog.close()}>
-              Cancel
-            </Button>
-            <Button variant="primary" size="large" disabled={store.adding || busy()} onClick={() => void finish()}>
-              {store.adding ? "Adding..." : "Add WSL server"}
-            </Button>
-          </div>
+          </Show>
         </Show>
       </Show>
     </div>

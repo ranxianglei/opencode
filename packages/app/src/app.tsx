@@ -27,6 +27,7 @@ import {
   onCleanup,
   type ParentProps,
   Show,
+  startTransition,
   Suspense,
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
@@ -47,6 +48,7 @@ import { PromptProvider } from "@/context/prompt"
 import { ServerConnection, ServerProvider, serverName, useServer } from "@/context/server"
 import { SettingsProvider } from "@/context/settings"
 import { TerminalProvider } from "@/context/terminal"
+import { WslServersProvider } from "@/context/wsl-servers"
 import DirectoryLayout from "@/pages/directory-layout"
 import Layout from "@/pages/layout"
 import { ErrorPage } from "./pages/error"
@@ -148,11 +150,13 @@ export function AppBaseProviders(props: ParentProps<{ locale?: Locale }>) {
           <UiI18nBridge>
             <ErrorBoundary fallback={(error) => <ErrorPage error={error} />}>
               <QueryProvider>
-                <DialogProvider>
-                  <MarkedProvider>
-                    <FileComponentProvider component={File}>{props.children}</FileComponentProvider>
-                  </MarkedProvider>
-                </DialogProvider>
+                <WslServersProvider>
+                  <DialogProvider>
+                    <MarkedProvider>
+                      <FileComponentProvider component={File}>{props.children}</FileComponentProvider>
+                    </MarkedProvider>
+                  </DialogProvider>
+                </WslServersProvider>
               </QueryProvider>
             </ErrorBoundary>
           </UiI18nBridge>
@@ -215,33 +219,37 @@ function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean }>) {
   )
 
   return (
-    <Suspense fallback={splash}>
-      <Show
-        when={checkMode() === "blocking" ? !startupHealthCheck.loading : startupHealthCheck.state !== "pending"}
-        fallback={splash}
-      >
+    <Show when={server.ready()} fallback={splash}>
+      <Suspense fallback={splash}>
         <Show
-          when={startupHealthCheck()}
-          fallback={
-            <ConnectionError
-              onRetry={() => {
-                if (checkMode() === "background") void healthCheckActions.refetch()
-              }}
-              onServerSelected={(key) => {
-                void withServerSwitchOverlay(() => {
-                  batch(() => {
-                    setCheckMode("blocking")
-                    server.setActive(key)
-                  })
-                })
-              }}
-            />
-          }
+          when={checkMode() === "blocking" ? !startupHealthCheck.loading : startupHealthCheck.state !== "pending"}
+          fallback={splash}
         >
-          {props.children}
+          <Show
+            when={startupHealthCheck()}
+            fallback={
+              <ConnectionError
+                onRetry={() => {
+                  if (checkMode() === "background") void healthCheckActions.refetch()
+                }}
+                onServerSelected={(key) => {
+                  void withServerSwitchOverlay(() =>
+                    startTransition(() => {
+                      batch(() => {
+                        setCheckMode("blocking")
+                        server.setActive(key)
+                      })
+                    }),
+                  )
+                }}
+              />
+            }
+          >
+            {props.children}
+          </Show>
         </Show>
-      </Show>
-    </Suspense>
+      </Suspense>
+    </Show>
   )
 }
 
@@ -336,6 +344,7 @@ export function AppInterface(props: {
   children?: JSX.Element
   defaultServer: ServerConnection.Key
   servers?: Array<ServerConnection.Any>
+  serversReady?: boolean
   router?: Component<BaseRouterProps>
   disableHealthCheck?: boolean
 }) {
@@ -349,6 +358,7 @@ export function AppInterface(props: {
     <ServerProvider
       defaultServer={props.defaultServer}
       disableHealthCheck={props.disableHealthCheck}
+      serversReady={props.serversReady}
       servers={props.servers}
     >
       <ConnectionGate disableHealthCheck={props.disableHealthCheck}>

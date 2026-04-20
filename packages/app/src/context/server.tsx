@@ -97,9 +97,11 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
   init: (props: {
     defaultServer: ServerConnection.Key
     disableHealthCheck?: boolean
+    serversReady?: boolean
     servers?: Array<ServerConnection.Any>
   }) => {
     const checkServerHealth = useCheckServerHealth()
+    const serversReady = () => props.serversReady ?? true
 
     const [store, setStore, _, ready] = persisted(
       Persist.global("server", ["server.v3"]),
@@ -204,8 +206,6 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       })
     }
 
-    const isReady = createMemo(() => ready() && !!state.active)
-
     const check = (conn: ServerConnection.Any) =>
       checkServerHealth(conn.http).then((x) => {
         if (!x.healthy) {
@@ -229,14 +229,19 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
 
     const origin = createMemo(() => projectsKey(state.active))
     const projectsList = createMemo(() => store.projects[origin()] ?? [])
-    const current: Accessor<ServerConnection.Any | undefined> = createMemo(
-      () => allServers().find((s) => ServerConnection.key(s) === state.active) ?? allServers()[0],
-    )
+    const current: Accessor<ServerConnection.Any | undefined> = createMemo(() => {
+      const list = allServers()
+      const active = list.find((s) => ServerConnection.key(s) === state.active)
+      if (active) return active
+      if (!serversReady()) return
+      return list[0]
+    })
     const healthTarget = createMemo(() => {
       const conn = current()
       if (!conn) return ""
       return [ServerConnection.key(conn), conn.http.url, conn.http.username ?? "", conn.http.password ?? ""].join("\n")
     })
+    const isReady = createMemo(() => ready() && !!current())
 
     createEffect(() => {
       healthTarget()
@@ -257,6 +262,7 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
     })
 
     createEffect(() => {
+      if (!serversReady()) return
       const list = allServers()
       if (!list.length) return
       if (list.some((conn) => ServerConnection.key(conn) === state.active)) return

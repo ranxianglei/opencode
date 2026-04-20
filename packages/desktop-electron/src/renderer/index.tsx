@@ -437,58 +437,38 @@ render(() => {
 
   const [defaultServer] = createResource(() =>
     platform.getDefaultServer?.().then((url) => {
-      if (url) return ServerConnection.key({ type: "http", http: { url } })
+      if (url) return ServerConnection.Key.make(url)
     }),
   )
   const [locale] = createResource(loadLocale)
-
-  const [wslServers, setWslServers] = createSignal<WslServersState | null>(null)
+  const [storedServers] = createResource(async () => {
+    const raw = await platform.storage?.("opencode.global.dat").getItem("server")
+    if (!raw) return []
+    try {
+      const parsed = JSON.parse(raw) as { list?: unknown }
+      return Array.isArray(parsed.list) ? parsed.list : []
+    } catch {
+      return []
+    }
+  })
+  const [wslServers, setWslServers] = createSignal<WslServersState | undefined>()
+  const [wslReady, setWslReady] = createSignal(!platform.wslServers)
   if (platform.wslServers) {
-    void platform.wslServers.getState().then((state) => setWslServers(state))
-    const off = platform.wslServers.subscribe((event: WslServersEvent) => setWslServers(event.state))
+    void platform.wslServers
+      .getState()
+      .then((state) => {
+        setWslServers(state)
+        setWslReady(true)
+      })
+      .catch(() => {
+        setWslReady(true)
+      })
+    const off = platform.wslServers.subscribe((event: WslServersEvent) => {
+      setWslServers(event.state)
+      setWslReady(true)
+    })
     onCleanup(off)
   }
-
-  const servers = createMemo(() => {
-    const data = startup.latest?.sidecar
-    const list: ServerConnection.Any[] = []
-    if (data) {
-      list.push({
-        displayName: "Local Server",
-        type: "sidecar",
-        variant: "base",
-        http: {
-          url: data.local.url,
-          username: data.local.username ?? undefined,
-          password: data.local.password ?? undefined,
-        },
-      })
-    }
-    const wsl = wslServers()
-    if (wsl) {
-      for (const item of wsl.servers) {
-        const runtime = item.runtime
-        const http =
-          runtime.kind === "ready"
-            ? {
-                url: runtime.url,
-                username: runtime.username ?? undefined,
-                password: runtime.password ?? undefined,
-              }
-            : {
-                url: `http://wsl-${item.config.distro}.invalid`,
-              }
-        list.push({
-          displayName: item.config.distro,
-          type: "sidecar",
-          variant: "wsl",
-          distro: item.config.distro,
-          http,
-        })
-      }
-    }
-    return list
-  })
 
   function handleClick(e: MouseEvent) {
     const link = (e.target as HTMLElement).closest("a.external-link") as HTMLAnchorElement | null
@@ -516,6 +496,76 @@ render(() => {
     return null
   }
 
+  function App() {
+    const splash = (
+      <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base">
+        <Splash class="w-16 h-20 opacity-50 animate-pulse" />
+      </div>
+    )
+
+    const ready = createMemo(
+      () =>
+        !defaultServer.loading &&
+        !startup.loading &&
+        !windowCount.loading &&
+        !locale.loading,
+    )
+    const servers = createMemo(() => {
+      const data = startup.latest?.sidecar
+      const list: ServerConnection.Any[] = []
+      if (data) {
+        list.push({
+          displayName: "Local Server",
+          type: "sidecar",
+          variant: "base",
+          http: {
+            url: data.local.url,
+            username: data.local.username ?? undefined,
+            password: data.local.password ?? undefined,
+          },
+        })
+      }
+      for (const item of wslServers()?.servers ?? []) {
+        const runtime = item.runtime
+        list.push({
+          displayName: item.config.distro,
+          type: "sidecar",
+          variant: "wsl",
+          distro: item.config.distro,
+          http:
+            runtime.kind === "ready"
+              ? {
+                  url: runtime.url,
+                  username: runtime.username ?? undefined,
+                  password: runtime.password ?? undefined,
+                }
+              : { url: `http://wsl-${item.config.distro}.invalid` },
+        })
+      }
+      return list
+    })
+    const hasFallbackServers = createMemo(() => {
+      if ((storedServers.latest?.length ?? 0) > 0) return true
+      return (wslServers()?.servers.length ?? 0) > 0
+    })
+
+    if (!ready()) return splash
+    if (startup.latest?.error && !storedServers.loading && !hasFallbackServers()) {
+      return <LocalServerStartupError message={startup.latest.error} />
+    }
+
+    return (
+      <AppInterface
+        defaultServer={defaultServer.latest ?? ServerConnection.Key.make(startup.latest?.sidecar?.local.key ?? "local:windows")}
+        serversReady={wslReady()}
+        servers={servers()}
+        router={MemoryRouter}
+      >
+        <Inner />
+      </AppInterface>
+    )
+  }
+
   onMount(() => {
     document.addEventListener("click", handleClick)
     onCleanup(() => {
@@ -526,25 +576,7 @@ render(() => {
   return (
     <PlatformProvider value={platform}>
       <AppBaseProviders locale={locale.latest}>
-        <Show when={!defaultServer.loading && !startup.loading && !windowCount.loading && !locale.loading}>
-          {(_) => {
-            if (startup.latest?.error) {
-              return <LocalServerStartupError message={startup.latest.error} />
-            }
-            return (
-              <AppInterface
-                defaultServer={
-                  defaultServer.latest ??
-                  ServerConnection.Key.make(startup.latest?.sidecar?.local.key ?? "local:windows")
-                }
-                servers={servers()}
-                router={MemoryRouter}
-              >
-                <Inner />
-              </AppInterface>
-            )
-          }}
-        </Show>
+        <App />
       </AppBaseProviders>
     </PlatformProvider>
   )
