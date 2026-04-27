@@ -180,13 +180,14 @@ const createPlatform = (): Platform => {
     })
   }
 
-  const handleWslPicker = async <T extends string | string[]>(result: T | null): Promise<T | null> => {
+  const handleWslPicker = async <T extends string | string[] | null>(result: T): Promise<T> => {
     const distro = activeWslDistro()
     if (!result || !distro) return result
+    const convert = (path: string) => window.api.wslPath(path, "linux", distro).catch(() => path)
     if (Array.isArray(result)) {
-      return Promise.all(result.map((path) => window.api.wslPath(path, "linux", distro).catch(() => path))) as any
+      return (await Promise.all(result.map(convert))) as T
     }
-    return window.api.wslPath(result, "linux", distro).catch(() => result) as any
+    return (await convert(result)) as T
   }
 
   const storage = (() => {

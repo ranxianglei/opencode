@@ -5,7 +5,7 @@ import { app } from "electron"
 import { DEFAULT_SERVER_URL_KEY } from "./constants"
 import { getUserShell, loadShellEnv } from "./shell-env"
 import { getStore } from "./store"
-import { type WslCommandLine, resolveWslOpencode, wslArgs } from "./wsl"
+import { type WslCommandLine, resolveWslOpencode, shellEscape, wslArgs } from "./wsl"
 
 export type HealthCheck = { wait: Promise<void> }
 
@@ -226,10 +226,6 @@ function prepareServerEnv(password: string) {
     XDG_STATE_HOME: app.getPath("userData"),
   }
   Object.assign(process.env, env)
-}
-
-function shellEscape(value: string) {
-  return `'${value.replace(/'/g, `'"'"'`)}'`
 }
 
 function forwardLines(

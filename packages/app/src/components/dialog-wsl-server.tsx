@@ -3,10 +3,10 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Spinner } from "@opencode-ai/ui/spinner"
 import { useMutation } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
-import { createEffect, createMemo, For, Match, Show, Switch } from "solid-js"
+import { createEffect, createMemo, For, Match, onCleanup, Show, Switch } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLanguage } from "@/context/language"
-import type { WslServerStep } from "@/context/platform"
+import type { WslServersPlatform, WslServerStep } from "@/context/platform"
 import { usePlatform } from "@/context/platform"
 import { useWslServers } from "@/context/wsl-servers"
 
@@ -41,6 +41,15 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
   })
   const current = () => wslServers.data
   const wslApi = () => platform.wslServers
+  const withWslApi = async <T,>(run: (api: WslServersPlatform) => Promise<T>) => {
+    const api = wslApi()
+    if (!api) return
+    return run(api)
+  }
+  let disposed = false
+  onCleanup(() => {
+    disposed = true
+  })
   const busy = createMemo(() => !!current()?.job || store.adding)
   const selectedDistro = () => store.selectedDistro
   const selectedProbe = createMemo(() => {
@@ -132,75 +141,39 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
   const activeStep = createMemo(() => store.step ?? recommendedStep())
 
   const probeRuntimeMutation = useMutation(() => ({
-    mutationFn: async () => {
-      const api = wslApi()
-      if (!api) return
-      await api.probeRuntime()
-    },
+    mutationFn: () => withWslApi((api) => api.probeRuntime()),
   }))
 
   const refreshDistrosMutation = useMutation(() => ({
-    mutationFn: async () => {
-      const api = wslApi()
-      if (!api) return
-      await api.refreshDistros()
-    },
+    mutationFn: () => withWslApi((api) => api.refreshDistros()),
   }))
 
   const installWslMutation = useMutation(() => ({
-    mutationFn: async () => {
-      const api = wslApi()
-      if (!api) return
-      await api.installWsl()
-    },
+    mutationFn: () => withWslApi((api) => api.installWsl()),
   }))
 
   const installDistroMutation = useMutation(() => ({
-    mutationFn: async (name: string) => {
-      const api = wslApi()
-      if (!api) return
-      await api.installDistro(name)
-    },
+    mutationFn: (name: string) => withWslApi((api) => api.installDistro(name)),
   }))
 
   const probeDistroMutation = useMutation(() => ({
-    mutationFn: async (name: string) => {
-      const api = wslApi()
-      if (!api) return
-      await api.probeDistro(name)
-    },
+    mutationFn: (name: string) => withWslApi((api) => api.probeDistro(name)),
   }))
 
   const probeOpencodeMutation = useMutation(() => ({
-    mutationFn: async (name: string) => {
-      const api = wslApi()
-      if (!api) return
-      await api.probeOpencode(name)
-    },
+    mutationFn: (name: string) => withWslApi((api) => api.probeOpencode(name)),
   }))
 
   const installOpencodeMutation = useMutation(() => ({
-    mutationFn: async (name: string) => {
-      const api = wslApi()
-      if (!api) return
-      await api.installOpencode(name)
-    },
+    mutationFn: (name: string) => withWslApi((api) => api.installOpencode(name)),
   }))
 
   const openTerminalMutation = useMutation(() => ({
-    mutationFn: async (name: string) => {
-      const api = wslApi()
-      if (!api) return
-      await api.openTerminal(name)
-    },
+    mutationFn: (name: string) => withWslApi((api) => api.openTerminal(name)),
   }))
 
   const addServerMutation = useMutation(() => ({
-    mutationFn: async (distro: string) => {
-      const api = wslApi()
-      if (!api) return
-      return api.addServer(distro)
-    },
+    mutationFn: (distro: string) => withWslApi((api) => api.addServer(distro)),
   }))
 
   const autoProbe = createMemo(() => {
@@ -233,6 +206,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
       try {
         await probe.run()
       } catch (err) {
+        if (disposed) return
         // Allow the same probe to run again when reactive inputs next change
         // (e.g. user reselects a distro). Without this the user would be stuck
         // on a transient wsl.exe failure until they pick a different distro.
@@ -309,12 +283,18 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
     }
   })
 
-  const run = async (action: () => Promise<void>) => {
+  const run = async (action: () => Promise<unknown>) => {
     try {
       await action()
     } catch (err) {
       requestError(language, err)
     }
+  }
+
+  const runSelectedDistro = (action: (distro: string) => Promise<unknown>) => {
+    const distro = selectedDistro()
+    if (!distro) return
+    void run(() => action(distro))
   }
 
   const selectDistro = (name: string) => {
@@ -427,11 +407,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                     variant="ghost"
                     size="small"
                     disabled={busy()}
-                    onClick={() => {
-                      const distro = selectedDistro()
-                      if (!distro) return
-                      void run(() => probeDistroMutation.mutateAsync(distro))
-                    }}
+                    onClick={() => runSelectedDistro((distro) => probeDistroMutation.mutateAsync(distro))}
                   >
                     Refresh
                   </Button>
@@ -560,11 +536,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                   variant="secondary"
                   size="large"
                   disabled={busy() || !selectedInstalled()}
-                  onClick={() => {
-                    const distro = selectedDistro()
-                    if (!distro) return
-                    void run(() => openTerminalMutation.mutateAsync(distro))
-                  }}
+                  onClick={() => runSelectedDistro((distro) => openTerminalMutation.mutateAsync(distro))}
                 >
                   Open terminal
                 </Button>
@@ -572,11 +544,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                   variant="ghost"
                   size="large"
                   disabled={busy() || !selectedDistro()}
-                  onClick={() => {
-                    const distro = selectedDistro()
-                    if (!distro) return
-                    void run(() => probeDistroMutation.mutateAsync(distro))
-                  }}
+                  onClick={() => runSelectedDistro((distro) => probeDistroMutation.mutateAsync(distro))}
                 >
                   Refresh
                 </Button>
@@ -605,11 +573,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                       variant="ghost"
                       size="large"
                       disabled={busy()}
-                      onClick={() => {
-                        const distro = selectedDistro()
-                        if (!distro) return
-                        void run(() => probeOpencodeMutation.mutateAsync(distro))
-                      }}
+                      onClick={() => runSelectedDistro((distro) => probeOpencodeMutation.mutateAsync(distro))}
                     >
                       Refresh
                     </Button>
@@ -619,11 +583,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                       variant="secondary"
                       size="large"
                       disabled={busy()}
-                      onClick={() => {
-                        const distro = selectedDistro()
-                        if (!distro) return
-                        void run(() => installOpencodeMutation.mutateAsync(distro))
-                      }}
+                      onClick={() => runSelectedDistro((distro) => installOpencodeMutation.mutateAsync(distro))}
                     >
                       {opencodeCheck()?.resolvedPath ? "Update OpenCode" : "Install OpenCode"}
                     </Button>

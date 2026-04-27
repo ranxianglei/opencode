@@ -1,7 +1,6 @@
 import { Dialog as Kobalte } from "@kobalte/core/dialog"
-import { ComponentProps, createEffect, JSXElement, Match, ParentProps, Show, Switch, useContext } from "solid-js"
+import { ComponentProps, JSXElement, Match, ParentProps, Show, Switch } from "solid-js"
 import { useI18n } from "../context/i18n"
-import { DialogContext } from "../context/dialog"
 import { IconButton } from "./icon-button"
 
 export interface DialogProps extends ParentProps {
@@ -20,12 +19,6 @@ export interface DialogProps extends ParentProps {
 
 export function Dialog(props: DialogProps) {
   const i18n = useI18n()
-  const dialogCtx = useContext(DialogContext)
-  createEffect(() => {
-    if (!dialogCtx) return
-    if (props.dismissOutside === undefined) return
-    dialogCtx.active?.setDismissOutside(props.dismissOutside)
-  })
   return (
     <div
       data-component="dialog"
@@ -48,6 +41,9 @@ export function Dialog(props: DialogProps) {
               e.preventDefault()
               autofocusEl.focus()
             }
+          }}
+          onInteractOutside={(e) => {
+            if (props.dismissOutside === false) e.preventDefault()
           }}
         >
           <Show when={props.title || props.action}>

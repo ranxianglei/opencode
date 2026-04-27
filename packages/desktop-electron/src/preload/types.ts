@@ -14,8 +14,6 @@ export type ServerReadyData = {
 
 export type SqliteMigrationProgress = { type: "InProgress"; value: number } | { type: "Done" }
 
-export type WslServerStep = "wsl" | "distro" | "opencode"
-
 export type WslRuntimeCheck = {
   available: boolean
   version: string | null

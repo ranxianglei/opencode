@@ -17,7 +17,11 @@ const api: ElectronAPI = {
     subscribe: (cb) => {
       const handler = (_: unknown, event: WslServersEvent) => cb(event)
       ipcRenderer.on("wsl-servers-event", handler)
-      return () => ipcRenderer.removeListener("wsl-servers-event", handler)
+      void ipcRenderer.invoke("wsl-servers-subscribe")
+      return () => {
+        ipcRenderer.removeListener("wsl-servers-event", handler)
+        void ipcRenderer.invoke("wsl-servers-unsubscribe")
+      }
     },
     probeRuntime: () => ipcRenderer.invoke("wsl-servers-probe-runtime"),
     refreshDistros: () => ipcRenderer.invoke("wsl-servers-refresh-distros"),

@@ -186,12 +186,6 @@ export type WslRegistryDistro = {
   version: number
 }
 
-// Distros that are designed to run as root and don't have a user-level
-// first-run setup. Ubuntu/Debian/Kali/etc. all run a first-boot hook that
-// prompts for a UNIX username on first invocation; if that never runs,
-// wsl.exe -d <distro> hangs silently forever.
-const ALWAYS_ROOT_DISTROS = new Set(["docker-desktop", "docker-desktop-data"])
-
 // Read LXSS metadata from the Windows registry. This never invokes
 // wsl.exe, so it is safe to call when wsl.exe itself is wedged.
 // DefaultUid === 0 on a user-oriented distro means the first-run
@@ -243,20 +237,6 @@ export async function readWslDistrosFromRegistry(opts?: RunWslOptions): Promise<
   return out
 }
 
-export type WslFirstRunCheck =
-  | { status: "ok" }
-  | { status: "needs-first-run"; defaultUid: number }
-  | { status: "not-installed" }
-
-export async function checkWslDistroFirstRun(distro: string, opts?: RunWslOptions): Promise<WslFirstRunCheck> {
-  const distros = await readWslDistrosFromRegistry(opts)
-  const entry = distros.find((d) => d.name === distro)
-  if (!entry) return { status: "not-installed" }
-  if (ALWAYS_ROOT_DISTROS.has(entry.name)) return { status: "ok" }
-  if (entry.defaultUid === 0) return { status: "needs-first-run", defaultUid: entry.defaultUid }
-  return { status: "ok" }
-}
-
 export function runWslSh(script: string, distro?: string | null, opts?: RunWslOptions) {
   return runWslInDistro(["sh", "-lc", script], distro, opts)
 }
@@ -305,10 +285,6 @@ export async function listOnlineWslDistros(opts?: RunWslOptions) {
     throw new Error(summarize(result.stderr || result.stdout) || "Failed to list online WSL distros")
   }
   return parseOnlineDistros(result.stdout)
-}
-
-export async function installWslRuntime(opts?: RunWslOptions) {
-  return runWsl(["--install", "--no-distribution"], withTimeout(opts, DEFAULT_WSL_INSTALL_TIMEOUT_MS))
 }
 
 export async function installWslRuntimeElevated(opts?: RunWslOptions) {
@@ -510,7 +486,7 @@ function firstLine(value: string) {
   )
 }
 
-function summarize(value: string) {
+export function summarize(value: string) {
   return value
     .split(/\r?\n/g)
     .map((line) => line.trim())
@@ -518,7 +494,7 @@ function summarize(value: string) {
     .join("\n")
 }
 
-function shellEscape(value: string) {
+export function shellEscape(value: string) {
   return `'${value.replace(/'/g, `'"'"'`)}'`
 }
 

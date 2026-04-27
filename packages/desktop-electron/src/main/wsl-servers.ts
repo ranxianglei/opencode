@@ -28,6 +28,7 @@ import {
   probeWslRuntime,
   readWslCommandVersion,
   resolveWslOpencode,
+  summarize,
   upgradeWslOpencode,
   wslNeedsRestart,
 } from "./wsl"
@@ -53,7 +54,6 @@ export function wslServerIdForDistro(distro: string) {
 }
 
 export function createWslServersController(appVersion: string, spawnSidecar: SpawnSidecar, logger?: ControllerLogger) {
-  const mainLogger: ControllerLogger | undefined = logger
   let state: WslServersState = initialState()
   const listeners = new Set<(event: WslServersEvent) => void>()
   const sidecars = new Map<string, RunningSidecar>()
@@ -151,6 +151,17 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
     setOpencodeCheck(distro, opencodeCheck(distro, resolved, version, appVersion))
   }
 
+  const refreshDistroLists = async (opts: { signal?: AbortSignal; onLine?: (line: WslCommandLine) => void }) => {
+    const [installedResult, onlineResult] = await Promise.allSettled([
+      listInstalledWslDistros(opts),
+      listOnlineWslDistros(opts),
+    ])
+    return {
+      installed: installedResult.status === "fulfilled" ? installedResult.value : [],
+      online: onlineResult.status === "fulfilled" ? onlineResult.value : [],
+    }
+  }
+
   const nextStartAttempt = (id: string) => {
     const next = (startAttempts.get(id) ?? 0) + 1
     startAttempts.set(id, next)
@@ -172,7 +183,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
     await stopServerInternal(id)
     if (!isCurrentStartAttempt(id, attempt)) return
     setRuntime(id, { kind: "starting" })
-    mainLogger?.log("wsl sidecar starting", { id, distro: item.config.distro })
+    logger?.log("wsl sidecar starting", { id, distro: item.config.distro })
     try {
       const sidecar = await spawnSidecar(item.config.distro)
       if (!isCurrentStartAttempt(id, attempt)) {
@@ -195,26 +206,26 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
         sidecars.delete(id)
         const message = startupFailure(code, signal)
         setRuntime(id, { kind: "failed", message })
-        mainLogger?.error("wsl sidecar exited", { id, distro: item.config.distro, code, signal })
+        logger?.error("wsl sidecar exited", { id, distro: item.config.distro, code, signal })
       })
       void refreshOpencodeCheck(item.config.distro).catch((error) => {
         const message = error instanceof Error ? error.message : String(error)
-        mainLogger?.error("wsl opencode check failed", { id, distro: item.config.distro, message })
+        logger?.error("wsl opencode check failed", { id, distro: item.config.distro, message })
       })
-      mainLogger?.log("wsl sidecar ready", { id, distro: item.config.distro, url: sidecar.url })
+      logger?.log("wsl sidecar ready", { id, distro: item.config.distro, url: sidecar.url })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (!isCurrentStartAttempt(id, attempt)) return
       if (isMissingDistroError(message)) {
         removeMissingServer(id)
-        mainLogger?.error("wsl server removed after missing distro", { id, distro: item.config.distro, message })
+        logger?.error("wsl server removed after missing distro", { id, distro: item.config.distro, message })
         return
       }
       setRuntime(id, { kind: "failed", message })
       // Without this, an Ubuntu-style silent failure leaves no trace in
       // main.log — the controller captures the message in its state but
       // nothing surfaces unless the user opens the WSL servers dialog.
-      mainLogger?.error("wsl sidecar failed to start", { id, distro: item.config.distro, message })
+      logger?.error("wsl sidecar failed to start", { id, distro: item.config.distro, message })
     }
   }
 
@@ -274,13 +285,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
     async refreshDistros() {
       await runJob({ kind: "distros", startedAt: Date.now() }, async (abort) => {
         appendTranscript({ stream: "system", text: "Listing WSL distros" })
-        const [installedResult, onlineResult] = await Promise.allSettled([
-          listInstalledWslDistros({ signal: abort.signal, onLine }),
-          listOnlineWslDistros({ signal: abort.signal, onLine }),
-        ])
-        const installed = installedResult.status === "fulfilled" ? installedResult.value : []
-        const online = onlineResult.status === "fulfilled" ? onlineResult.value : []
-        setState({ installed, online })
+        setState(await refreshDistroLists({ signal: abort.signal, onLine }))
       })
     },
 
@@ -309,16 +314,10 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
           const message = summarize(result.stderr || result.stdout) || `Failed to install distro: ${name}`
           throw new Error(message)
         }
-        const [installedResult, onlineResult] = await Promise.allSettled([
-          listInstalledWslDistros({ signal: abort.signal, onLine }),
-          listOnlineWslDistros({ signal: abort.signal, onLine }),
-        ])
-        const installed = installedResult.status === "fulfilled" ? installedResult.value : []
-        const online = onlineResult.status === "fulfilled" ? onlineResult.value : []
+        const distros = await refreshDistroLists({ signal: abort.signal, onLine })
         const probe = await probeWslDistro(name, { signal: abort.signal, onLine })
         setState({
-          installed,
-          online,
+          ...distros,
           distroProbes: { ...state.distroProbes, [name]: probe },
         })
       })
@@ -532,14 +531,6 @@ function opencodeCheck(
     matchesDesktop: version === expectedVersion,
     error: null,
   }
-}
-
-function summarize(value: string) {
-  return value
-    .split(/\r?\n/g)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .join("\n")
 }
 
 function isMissingDistroError(message: string) {

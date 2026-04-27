@@ -352,7 +352,7 @@ function wireMenu() {
 }
 
 registerIpcHandlers({
-  httpFetch: (input) => bridgedHttpFetch(input),
+  httpFetch: (input) => bridgedHttpFetch(input, readyWslUrls()),
   killSidecar: () => killSidecar(),
   relaunch: () => relaunchApp(),
   awaitInitialization: async (sendStep) => {
@@ -401,6 +401,12 @@ registerIpcHandlers({
   setBackgroundColor: (color) => setBackgroundColor(color),
 })
 
+function readyWslUrls() {
+  return wslServers
+    .getState()
+    .servers.flatMap((item) => (item.runtime.kind === "ready" ? [item.runtime.url] : []))
+}
+
 function killSidecar() {
   if (!server) return
   server.stop()
@@ -421,13 +427,19 @@ function relaunchApp() {
 // silently drops idle loopback sockets, so reusing one hangs until timeout.
 // `agent: false` + `Connection: close` forces a fresh TCP connection per
 // request, which is the only reliable way to hit a WSL-forwarded port.
-function bridgedHttpFetch(input: {
-  url: string
-  method: string
-  headers: Record<string, string>
-  body?: string
-  timeoutMs?: number
-}): Promise<{
+const BRIDGED_HTTP_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+const MAX_BRIDGED_HTTP_BODY_BYTES = 25 * 1024 * 1024
+
+function bridgedHttpFetch(
+  input: {
+    url: string
+    method: string
+    headers: Record<string, string>
+    body?: string
+    timeoutMs?: number
+  },
+  allowedUrls: string[],
+): Promise<{
   status: number
   statusText: string
   headers: Record<string, string>
@@ -445,12 +457,25 @@ function bridgedHttpFetch(input: {
       reject(new Error(`httpFetch: only http: is supported (got ${parsed.protocol})`))
       return
     }
+    if (!allowedUrls.some((url) => sameOrigin(parsed, url))) {
+      reject(new Error("httpFetch: url is not an active WSL sidecar"))
+      return
+    }
+    const method = input.method.toUpperCase()
+    if (!BRIDGED_HTTP_METHODS.has(method)) {
+      reject(new Error(`httpFetch: unsupported method ${input.method}`))
+      return
+    }
+    if (input.body && Buffer.byteLength(input.body) > MAX_BRIDGED_HTTP_BODY_BYTES) {
+      reject(new Error(`httpFetch: request body exceeded ${MAX_BRIDGED_HTTP_BODY_BYTES} bytes`))
+      return
+    }
 
     const req = nodeHttp.request({
       host: parsed.hostname,
       port: parsed.port ? Number(parsed.port) : 80,
       path: `${parsed.pathname}${parsed.search}`,
-      method: input.method,
+      method,
       headers: { ...input.headers, connection: "close" },
       agent: false,
     })
@@ -468,7 +493,15 @@ function bridgedHttpFetch(input: {
 
     req.once("response", (res) => {
       const chunks: Buffer[] = []
-      res.on("data", (chunk: Buffer) => chunks.push(chunk))
+      let bytes = 0
+      res.on("data", (chunk: Buffer) => {
+        bytes += chunk.length
+        if (bytes <= MAX_BRIDGED_HTTP_BODY_BYTES) {
+          chunks.push(chunk)
+          return
+        }
+        res.destroy(new Error(`httpFetch: response exceeded ${MAX_BRIDGED_HTTP_BODY_BYTES} bytes`))
+      })
       res.once("end", () => {
         const headers: Record<string, string> = {}
         for (const [key, value] of Object.entries(res.headers)) {
@@ -490,6 +523,15 @@ function bridgedHttpFetch(input: {
     if (input.body !== undefined) req.write(input.body)
     req.end()
   })
+}
+
+function sameOrigin(input: URL, allowed: string) {
+  try {
+    const url = new URL(allowed)
+    return input.protocol === url.protocol && input.hostname === url.hostname && input.port === url.port
+  } catch {
+    return false
+  }
 }
 
 function ensureLoopbackNoProxy() {
