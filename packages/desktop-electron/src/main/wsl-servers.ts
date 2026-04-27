@@ -5,7 +5,6 @@ import type {
   WslOnlineDistro,
   WslOpencodeCheck,
   WslRuntimeCheck,
-  WslServerAcknowledgements,
   WslServerConfig,
   WslServerItem,
   WslServerRuntime,
@@ -331,7 +330,6 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
       const config: WslServerConfig = {
         id,
         distro,
-        acknowledgements: { root: false, mismatch: null },
       }
       persistServers([...readPersistedServers(), config])
       setState({
@@ -355,15 +353,6 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
       invalidateStartAttempt(id)
       await stopServerInternal(id)
       setRuntime(id, { kind: "stopped" })
-    },
-
-    async updateAcknowledgements(id: string, acks: Partial<WslServerAcknowledgements>) {
-      const persisted = readPersistedServers()
-      const next = persisted.map((config) =>
-        config.id === id ? { ...config, acknowledgements: { ...config.acknowledgements, ...acks } } : config,
-      )
-      persistServers(next)
-      refreshFromStore()
     },
 
     stopAll() {
@@ -417,7 +406,6 @@ function migrateLegacyLocalServer(): WslServerConfig[] {
     {
       id: wslServerIdForDistro(distro),
       distro,
-      acknowledgements: { root: false, mismatch: null },
     },
   ]
 }
@@ -432,22 +420,8 @@ function normalizePersistedServer(value: unknown): WslServerConfig[] {
     {
       id,
       distro,
-      acknowledgements: normalizeAcks(record.acknowledgements),
     },
   ]
-}
-
-function normalizeAcks(value: unknown): WslServerAcknowledgements {
-  const record = value && typeof value === "object" ? (value as Record<string, unknown>) : {}
-  const mismatch =
-    record.mismatch && typeof record.mismatch === "object" ? (record.mismatch as Record<string, unknown>) : null
-  return {
-    root: record.root === true,
-    mismatch:
-      mismatch && typeof mismatch.path === "string" && typeof mismatch.version === "string"
-        ? { path: mismatch.path, version: mismatch.version }
-        : null,
-  }
 }
 
 function opencodeCheck(

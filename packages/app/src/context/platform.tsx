@@ -44,15 +44,9 @@ export type WslOpencodeCheck = {
   matchesDesktop: boolean | null
   error: string | null
 }
-export type WslServerAcknowledgements = {
-  root: boolean
-  mismatch: { path: string; version: string } | null
-}
-
 export type WslServerConfig = {
   id: string
   distro: string
-  acknowledgements: WslServerAcknowledgements
 }
 
 export type WslServerRuntime =
@@ -103,7 +97,6 @@ export type WslServersPlatform = {
   startServer(id: string): Promise<void>
   stopServer(id: string): Promise<void>
   cancelJob(): Promise<void>
-  updateAcknowledgements(id: string, acks: Partial<WslServerAcknowledgements>): Promise<void>
 }
 
 export type Platform = {

@@ -373,7 +373,6 @@ registerIpcHandlers({
   wslServersStartServer: (id) => wslServers.startServer(id),
   wslServersStopServer: (id) => wslServers.stopServer(id),
   wslServersCancelJob: () => wslServers.cancelJob(),
-  wslServersUpdateAcknowledgements: (id, acks) => wslServers.updateAcknowledgements(id, acks),
   getWindowConfig: () => ({ updaterEnabled: UPDATER_ENABLED }),
   consumeInitialDeepLinks: () => pendingDeepLinks.splice(0),
   getDefaultServerUrl: () => getDefaultServerUrl(),
