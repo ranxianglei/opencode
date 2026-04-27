@@ -14,7 +14,6 @@ import type {
   WslTranscriptLine,
 } from "../preload/types"
 import { LEGACY_LOCAL_SERVER_KEY, WSL_SERVERS_KEY } from "./constants"
-import { spawnWslSidecar } from "./server"
 import { getStore } from "./store"
 import type { WslCommandLine } from "./wsl"
 import {
@@ -412,10 +411,9 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
 
     stopAll() {
       for (const item of state.servers) invalidateStartAttempt(item.config.id)
-      for (const [id] of sidecars) {
-        const existing = sidecars.get(id)
+      for (const existing of sidecars.values()) {
         try {
-          existing?.listener.stop()
+          existing.listener.stop()
         } catch {
           // ignore
         }

@@ -59,7 +59,6 @@ interface ServerFormProps {
   placeholder: string
   busy: boolean
   error: string
-  status: boolean | undefined
   onChange: (value: string) => void
   onNameChange: (value: string) => void
   onUsernameChange: (value: string) => void
@@ -78,38 +77,6 @@ function showRequestError(language: ReturnType<typeof useLanguage>, err: unknown
 
 function isWslSidecar(conn: ServerConnection.Any): conn is ServerConnection.Sidecar & { variant: "wsl" } {
   return conn.type === "sidecar" && conn.variant === "wsl"
-}
-
-function useServerPreview() {
-  const checkServerHealth = useCheckServerHealth()
-
-  const looksComplete = (value: string) => {
-    const normalized = normalizeServerUrl(value)
-    if (!normalized) return false
-    const host = normalized.replace(/^https?:\/\//, "").split("/")[0]
-    if (!host) return false
-    if (host.includes("localhost") || host.startsWith("127.0.0.1")) return true
-    return host.includes(".") || host.includes(":")
-  }
-
-  const previewStatus = async (
-    value: string,
-    username: string,
-    password: string,
-    setStatus: (value: boolean | undefined) => void,
-  ) => {
-    setStatus(undefined)
-    if (!looksComplete(value)) return
-    const normalized = normalizeServerUrl(value)
-    if (!normalized) return
-    const http: ServerConnection.HttpBase = { url: normalized }
-    if (username) http.username = username
-    if (password) http.password = password
-    const result = await checkServerHealth(http)
-    setStatus(result.healthy)
-  }
-
-  return { previewStatus }
 }
 
 function ServerForm(props: ServerFormProps) {
@@ -184,7 +151,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   const language = useLanguage()
   const { defaultKey, canDefault, setDefault } = useDefaultServer()
   const wslServers = useWslServers()
-  const { previewStatus } = useServerPreview()
   const checkServerHealth = useCheckServerHealth()
   let disposed = false
   onCleanup(() => {
@@ -199,7 +165,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
       password: "",
       error: "",
       showForm: false,
-      status: undefined as boolean | undefined,
     },
     addWsl: {
       showWizard: props.initialView === "add-wsl",
@@ -212,7 +177,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
       username: "",
       password: "",
       error: "",
-      status: undefined as boolean | undefined,
     },
   })
 
@@ -224,7 +188,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
       password: "",
       error: "",
       showForm: false,
-      status: undefined,
     })
   }
   const resetEdit = () => {
@@ -235,7 +198,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
       username: "",
       password: "",
       error: "",
-      status: undefined,
     })
   }
 
@@ -417,10 +379,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     return wslState()?.opencodeChecks[conn.distro] ?? null
   }
 
-  const displayVersion = (conn: ServerConnection.Any) => {
-    return wslCheck(conn)?.version ?? undefined
-  }
-
   async function select(conn: ServerConnection.Any, persist?: boolean) {
     if (!isSelectable(conn)) return
     if (!persist && health(ServerConnection.key(conn))?.healthy === false) return
@@ -470,9 +428,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   const handleAddChange = (value: string) => {
     if (addMutation.isPending) return
     setStore("addServer", { url: value, error: "" })
-    void previewStatus(value, store.addServer.username, store.addServer.password, (next) =>
-      setStore("addServer", { status: next }),
-    )
   }
 
   const handleAddNameChange = (value: string) => {
@@ -483,25 +438,16 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   const handleAddUsernameChange = (value: string) => {
     if (addMutation.isPending) return
     setStore("addServer", { username: value, error: "" })
-    void previewStatus(store.addServer.url, value, store.addServer.password, (next) =>
-      setStore("addServer", { status: next }),
-    )
   }
 
   const handleAddPasswordChange = (value: string) => {
     if (addMutation.isPending) return
     setStore("addServer", { password: value, error: "" })
-    void previewStatus(store.addServer.url, store.addServer.username, value, (next) =>
-      setStore("addServer", { status: next }),
-    )
   }
 
   const handleEditChange = (value: string) => {
     if (editMutation.isPending) return
     setStore("editServer", { value, error: "" })
-    void previewStatus(value, store.editServer.username, store.editServer.password, (next) =>
-      setStore("editServer", { status: next }),
-    )
   }
 
   const handleEditNameChange = (value: string) => {
@@ -512,17 +458,11 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   const handleEditUsernameChange = (value: string) => {
     if (editMutation.isPending) return
     setStore("editServer", { username: value, error: "" })
-    void previewStatus(store.editServer.value, value, store.editServer.password, (next) =>
-      setStore("editServer", { status: next }),
-    )
   }
 
   const handleEditPasswordChange = (value: string) => {
     if (editMutation.isPending) return
     setStore("editServer", { password: value, error: "" })
-    void previewStatus(store.editServer.value, store.editServer.username, value, (next) =>
-      setStore("editServer", { status: next }),
-    )
   }
 
   const mode = createMemo<"list" | "add-wsl" | "add" | "edit">(() => {
@@ -554,7 +494,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
       username: DEFAULT_USERNAME,
       password: "",
       error: "",
-      status: undefined,
     })
   }
 
@@ -568,7 +507,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
       username: conn.http.username ?? "",
       password: conn.http.password ?? "",
       error: "",
-      status: health(ServerConnection.key(conn))?.healthy,
     })
   }
 
@@ -674,7 +612,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                   placeholder={language.t("dialog.server.add.placeholder")}
                   busy={formBusy()}
                   error={isAddMode() ? store.addServer.error : store.editServer.error}
-                  status={isAddMode() ? store.addServer.status : store.editServer.status}
                   onChange={isAddMode() ? handleAddChange : handleEditChange}
                   onNameChange={isAddMode() ? handleAddNameChange : handleEditNameChange}
                   onUsernameChange={isAddMode() ? handleAddUsernameChange : handleEditUsernameChange}
@@ -735,7 +672,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                     conn={i}
                     dimmed={blocked()}
                     status={health(key)}
-                    version={displayVersion(i)}
+                    version={wslCheck(i)?.version ?? undefined}
                     class="flex items-center gap-3 min-w-0 flex-1"
                     badge={
                       <Show when={defaultKey() === ServerConnection.key(i)}>

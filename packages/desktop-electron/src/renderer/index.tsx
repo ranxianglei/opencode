@@ -436,11 +436,7 @@ render(() => {
     }
   })
 
-  const [defaultServer] = createResource(() =>
-    platform.getDefaultServer?.().then((url) => {
-      if (url) return ServerConnection.Key.make(url)
-    }),
-  )
+  const [defaultServer] = createResource(() => platform.getDefaultServer?.())
   const [locale] = createResource(loadLocale)
   const [storedServers] = createResource(async () => {
     const raw = await platform.storage?.("opencode.global.dat").getItem("server")
