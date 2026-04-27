@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { EventEmitter } from "node:events"
 import { existsSync } from "node:fs"
 import * as nodeHttp from "node:http"
+import * as nodeHttps from "node:https"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import type { Event } from "electron"
@@ -344,7 +345,7 @@ function wireMenu() {
 }
 
 registerIpcHandlers({
-  httpFetch: (input) => bridgedHttpFetch(input, readyWslUrls()),
+  httpFetch: (input) => bridgedHttpFetch(input),
   killSidecar: () => killSidecar(),
   relaunch: () => relaunchApp(),
   awaitInitialization: async (sendStep) => {
@@ -393,12 +394,6 @@ registerIpcHandlers({
   setBackgroundColor: (color) => setBackgroundColor(color),
 })
 
-function readyWslUrls() {
-  return wslServers
-    .getState()
-    .servers.flatMap((item) => (item.runtime.kind === "ready" ? [item.runtime.url] : []))
-}
-
 function killSidecar() {
   if (!server) return
   server.stop()
@@ -414,7 +409,7 @@ function relaunchApp() {
   app.exit(0)
 }
 
-// Uses node:http directly rather than global fetch (undici). On Windows,
+// Uses node http clients directly rather than global fetch (undici). On Windows,
 // undici pools keep-alive sockets across requests; the WSL2 port proxy
 // silently drops idle loopback sockets, so reusing one hangs until timeout.
 // `agent: false` + `Connection: close` forces a fresh TCP connection per
@@ -430,7 +425,6 @@ function bridgedHttpFetch(
     body?: string
     timeoutMs?: number
   },
-  allowedUrls: string[],
 ): Promise<{
   status: number
   statusText: string
@@ -445,12 +439,8 @@ function bridgedHttpFetch(
       reject(new Error(`httpFetch: invalid url ${input.url}: ${String(error)}`))
       return
     }
-    if (parsed.protocol !== "http:") {
-      reject(new Error(`httpFetch: only http: is supported (got ${parsed.protocol})`))
-      return
-    }
-    if (!allowedUrls.some((url) => sameOrigin(parsed, url))) {
-      reject(new Error("httpFetch: url is not an active WSL sidecar"))
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      reject(new Error(`httpFetch: only http: and https: are supported (got ${parsed.protocol})`))
       return
     }
     const method = input.method.toUpperCase()
@@ -463,9 +453,9 @@ function bridgedHttpFetch(
       return
     }
 
-    const req = nodeHttp.request({
+    const req = (parsed.protocol === "https:" ? nodeHttps : nodeHttp).request({
       host: parsed.hostname,
-      port: parsed.port ? Number(parsed.port) : 80,
+      port: parsed.port ? Number(parsed.port) : parsed.protocol === "https:" ? 443 : 80,
       path: `${parsed.pathname}${parsed.search}`,
       method,
       headers: { ...input.headers, connection: "close" },
@@ -515,15 +505,6 @@ function bridgedHttpFetch(
     if (input.body !== undefined) req.write(input.body)
     req.end()
   })
-}
-
-function sameOrigin(input: URL, allowed: string) {
-  try {
-    const url = new URL(allowed)
-    return input.protocol === url.protocol && input.hostname === url.hostname && input.port === url.port
-  } catch {
-    return false
-  }
 }
 
 function ensureLoopbackNoProxy() {

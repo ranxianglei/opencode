@@ -306,10 +306,11 @@ export async function installWslDistro(name: string, opts?: RunWslOptions) {
 }
 
 export async function installWslOpencode(version: string, distro: string, opts?: RunWslOptions) {
-  return runWslBash(
-    `curl -fsSL https://opencode.ai/install | bash -s -- --version ${shellEscape(version)}`,
-    distro,
+  return runInteractiveCommand(
+    resolveSystem32Command("wsl.exe"),
+    wslArgs(["bash", "-lc", `curl -fsSL https://opencode.ai/install | bash -s -- --version ${shellEscape(version)}`], distro),
     withTimeout(opts, DEFAULT_WSL_INSTALL_TIMEOUT_MS),
+    DEFAULT_WSL_INSTALL_TIMEOUT_MS,
   )
 }
 
@@ -421,10 +422,11 @@ export async function readWslCommandVersion(command: string, distro: string, opt
 }
 
 export async function upgradeWslOpencode(target: string, command: string, distro: string, opts?: RunWslOptions) {
-  return runWslBash(
-    `${shellEscape(command)} upgrade ${shellEscape(target)}`,
-    distro,
+  return runInteractiveCommand(
+    resolveSystem32Command("wsl.exe"),
+    wslArgs(["bash", "-lc", `${shellEscape(command)} upgrade ${shellEscape(target)}`], distro),
     withTimeout(opts, DEFAULT_WSL_INSTALL_TIMEOUT_MS),
+    DEFAULT_WSL_INSTALL_TIMEOUT_MS,
   )
 }
 
