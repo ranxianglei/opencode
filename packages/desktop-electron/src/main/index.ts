@@ -7,7 +7,7 @@ import { join } from "node:path"
 import type { Event } from "electron"
 import { app, BrowserWindow, dialog } from "electron"
 import pkg from "electron-updater"
-import { drizzle } from "drizzle-orm/node-sqlite"
+import { drizzle } from "drizzle-orm/node-sqlite/driver"
 import type { Server } from "virtual:opencode-server"
 
 import contextMenu from "electron-context-menu"
@@ -46,7 +46,13 @@ import { createMenu } from "./menu"
 import { allocatePort, getDefaultServerUrl, setDefaultServerUrl, spawnLocalServer, spawnWslSidecar } from "./server"
 import { getStore } from "./store"
 import { createWslServersController } from "./wsl-servers"
-import { createLoadingWindow, createMainWindow, setBackgroundColor, setDockIcon } from "./windows"
+import {
+  createLoadingWindow,
+  createMainWindow,
+  registerRendererProtocol,
+  setBackgroundColor,
+  setDockIcon,
+} from "./windows"
 
 const initEmitter = new EventEmitter()
 let initStep: InitStep = { phase: "server_waiting" }
@@ -143,6 +149,7 @@ function setupApp() {
 
   void app.whenReady().then(async () => {
     app.setAsDefaultProtocolClient("opencode")
+    registerRendererProtocol()
     setDockIcon()
     setupAutoUpdater()
     await initialize()
@@ -254,15 +261,10 @@ async function initialize() {
     logger.log("loading task finished")
   })()
 
-  const globals = {
-    updaterEnabled: UPDATER_ENABLED,
-    deepLinks: pendingDeepLinks,
-  }
-
   if (needsMigration) {
     const show = await Promise.race([loadingTask.then(() => false), delay(1_000).then(() => true)])
     if (show) {
-      overlay = createLoadingWindow(globals)
+      overlay = createLoadingWindow()
       wireWindowDiagnostics(overlay, "loading")
       await delay(1_000)
     }
@@ -275,7 +277,7 @@ async function initialize() {
     await loadingComplete.promise
   }
 
-  mainWindow = createMainWindow(globals)
+  mainWindow = createMainWindow()
   wireWindowDiagnostics(mainWindow, "main")
   wireMenu()
 
@@ -382,6 +384,8 @@ registerIpcHandlers({
   wslServersStopServer: (id) => wslServers.stopServer(id),
   wslServersCancelJob: () => wslServers.cancelJob(),
   wslServersUpdateAcknowledgements: (id, acks) => wslServers.updateAcknowledgements(id, acks),
+  getWindowConfig: () => ({ updaterEnabled: UPDATER_ENABLED }),
+  consumeInitialDeepLinks: () => pendingDeepLinks.splice(0),
   getDefaultServerUrl: () => getDefaultServerUrl(),
   setDefaultServerUrl: (url) => setDefaultServerUrl(url),
   getDisplayBackend: async () => null,
@@ -530,11 +534,16 @@ function setupAutoUpdater() {
   })
 }
 
-let updateReady = false
+let downloadedUpdateVersion: string | undefined
 
 async function checkUpdate() {
   if (!UPDATER_ENABLED) return { updateAvailable: false }
-  updateReady = false
+  if (downloadedUpdateVersion) {
+    logger.log("returning cached downloaded update", {
+      version: downloadedUpdateVersion,
+    })
+    return { updateAvailable: true, version: downloadedUpdateVersion }
+  }
   logger.log("checking for updates", {
     currentVersion: app.getVersion(),
     channel: autoUpdater.channel,
@@ -560,7 +569,7 @@ async function checkUpdate() {
     logger.log("update available", { version })
     await autoUpdater.downloadUpdate()
     logger.log("update download completed", { version })
-    updateReady = true
+    downloadedUpdateVersion = version
     return { updateAvailable: true, version }
   } catch (error) {
     logger.error("update check failed", error)
@@ -569,7 +578,15 @@ async function checkUpdate() {
 }
 
 async function installUpdate() {
-  if (!updateReady) return
+  if (!downloadedUpdateVersion) {
+    logger.log("install update skipped", {
+      reason: "no downloaded update ready",
+    })
+    return
+  }
+  logger.log("installing downloaded update", {
+    version: downloadedUpdateVersion,
+  })
   killSidecar()
   wslServers.stopAll()
   autoUpdater.quitAndInstall()

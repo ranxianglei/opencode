@@ -70,11 +70,10 @@ import {
 } from "@opencode-ai/app"
 import type { AsyncStorage } from "@solid-primitives/storage"
 import { MemoryRouter } from "@solidjs/router"
-import { createEffect, createMemo, createResource, createSignal, onCleanup, onMount, Show } from "solid-js"
+import { createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js"
 import { render } from "solid-js/web"
 import pkg from "../../package.json"
 import { initI18n, t } from "./i18n"
-import { UPDATER_ENABLED } from "./updater"
 import { webviewZoom, zoomIn, zoomOut, zoomReset } from "./webview-zoom"
 import "./styles.css"
 import { Button } from "@opencode-ai/ui/button"
@@ -99,8 +98,7 @@ const emitDeepLinks = (urls: string[]) => {
 }
 
 const listenForDeepLinks = () => {
-  const startUrls = window.__OPENCODE__?.deepLinks ?? []
-  if (startUrls.length) emitDeepLinks(startUrls)
+  void window.api.consumeInitialDeepLinks().then((urls) => emitDeepLinks(urls))
   return window.api.onDeepLink((urls) => emitDeepLinks(urls))
 }
 
@@ -283,12 +281,14 @@ const createPlatform = (): Platform => {
     storage,
 
     checkUpdate: async () => {
-      if (!UPDATER_ENABLED()) return { updateAvailable: false }
+      const config = await window.api.getWindowConfig().catch(() => ({ updaterEnabled: false }))
+      if (!config.updaterEnabled) return { updateAvailable: false }
       return window.api.checkUpdate()
     },
 
-    update: async () => {
-      if (!UPDATER_ENABLED()) return
+    updateAndRestart: async () => {
+      const config = await window.api.getWindowConfig().catch(() => ({ updaterEnabled: false }))
+      if (!config.updaterEnabled) return
       await window.api.installUpdate()
     },
 

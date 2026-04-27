@@ -124,6 +124,10 @@ export type TitlebarTheme = {
   mode: "light" | "dark"
 }
 
+export type WindowConfig = {
+  updaterEnabled: boolean
+}
+
 export type ElectronAPI = {
   httpFetch: (input: {
     url: string
@@ -141,6 +145,8 @@ export type ElectronAPI = {
   installCli: () => Promise<string>
   awaitInitialization: (onStep: (step: InitStep) => void) => Promise<ServerReadyData>
   wslServers: WslServersAPI
+  getWindowConfig: () => Promise<WindowConfig>
+  consumeInitialDeepLinks: () => Promise<string[]>
   getDefaultServerUrl: () => Promise<string | null>
   setDefaultServerUrl: (url: string | null) => Promise<void>
   getDisplayBackend: () => Promise<LinuxDisplayBackend | null>

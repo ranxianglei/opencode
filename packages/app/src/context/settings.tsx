@@ -31,6 +31,7 @@ export interface Settings {
     showReasoningSummaries: boolean
     shellToolPartsExpanded: boolean
     editToolPartsExpanded: boolean
+    showSessionProgressBar: boolean
   }
   updates: {
     startup: boolean
@@ -56,7 +57,8 @@ export const terminalDefault = "JetBrainsMono Nerd Font Mono"
 const monoFallback =
   'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'
 const sansFallback = 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
-const terminalFallback = '"JetBrainsMono Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'
+const terminalFallback =
+  '"JetBrainsMono Nerd Font Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace'
 
 const monoBase = monoFallback
 const sansBase = sansFallback
@@ -114,6 +116,7 @@ const defaultSettings: Settings = {
     showReasoningSummaries: false,
     shellToolPartsExpanded: false,
     editToolPartsExpanded: false,
+    showSessionProgressBar: true,
   },
   updates: {
     startup: true,
@@ -225,6 +228,13 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         ),
         setEditToolPartsExpanded(value: boolean) {
           setStore("general", "editToolPartsExpanded", value)
+        },
+        showSessionProgressBar: withFallback(
+          () => store.general?.showSessionProgressBar,
+          defaultSettings.general.showSessionProgressBar,
+        ),
+        setShowSessionProgressBar(value: boolean) {
+          setStore("general", "showSessionProgressBar", value)
         },
       },
       updates: {

@@ -651,7 +651,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
       fit={isAddWslMode()}
       class={isAddWslMode() ? "[&_[data-slot=dialog-body]]:flex-none [&_[data-slot=dialog-body]]:overflow-visible" : undefined}
     >
-      <div class="flex flex-col gap-2">
+      <div class={isAddWslMode() ? "flex flex-col gap-2" : "flex flex-1 min-h-0 flex-col gap-2"}>
         <Show
           when={!isFormMode()}
           fallback={
@@ -693,7 +693,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
               if (x) void select(x)
             }}
             divider={true}
-            class="px-5 [&_[data-slot=list-search-wrapper]]:w-full [&_[data-slot=list-scroll]]h-[300px] [&_[data-slot=list-scroll]]:overflow-y-auto [&_[data-slot=list-items]]:bg-surface-base [&_[data-slot=list-items]]:rounded-md [&_[data-slot=list-item]]:min-h-14 [&_[data-slot=list-item]]:p-3 [&_[data-slot=list-item]]:!bg-transparent"
+            class="flex-1 min-h-0 px-5 [&_[data-slot=list-search-wrapper]]:w-full [&_[data-slot=list-scroll]]:flex-1 [&_[data-slot=list-scroll]]:overflow-y-auto [&_[data-slot=list-items]]:bg-surface-base [&_[data-slot=list-items]]:rounded-md [&_[data-slot=list-item]]:min-h-14 [&_[data-slot=list-item]]:p-3 [&_[data-slot=list-item]]:!bg-transparent"
           >
             {(i) => {
               const key = ServerConnection.key(i)
@@ -831,7 +831,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
           </List>
         </Show>
 
-        <div class="px-5 pb-5">
+        <div class="shrink-0 px-5 pb-5">
           <Show
             when={!isAddWslMode() && isFormMode()}
             fallback={

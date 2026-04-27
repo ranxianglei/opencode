@@ -4,7 +4,6 @@ declare global {
   interface Window {
     api: ElectronAPI
     __OPENCODE__?: {
-      updaterEnabled?: boolean
       deepLinks?: string[]
       activeServer?: string
     }

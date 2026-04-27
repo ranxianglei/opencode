@@ -7,6 +7,7 @@ import type {
   ServerReadyData,
   SqliteMigrationProgress,
   TitlebarTheme,
+  WindowConfig,
   WslServerAcknowledgements,
   WslServerConfig,
   WslServersEvent,
@@ -52,6 +53,8 @@ type Deps = {
   wslServersStopServer: (id: string) => Promise<void> | void
   wslServersCancelJob: () => Promise<void> | void
   wslServersUpdateAcknowledgements: (id: string, acks: Partial<WslServerAcknowledgements>) => Promise<void> | void
+  getWindowConfig: () => Promise<WindowConfig> | WindowConfig
+  consumeInitialDeepLinks: () => Promise<string[]> | string[]
   getDefaultServerUrl: () => Promise<string | null> | string | null
   setDefaultServerUrl: (url: string | null) => Promise<void> | void
   getDisplayBackend: () => Promise<string | null>
@@ -124,6 +127,8 @@ export function registerIpcHandlers(deps: Deps) {
     (_event: IpcMainInvokeEvent, id: string, acks: Partial<WslServerAcknowledgements>) =>
       deps.wslServersUpdateAcknowledgements(id, acks),
   )
+  ipcMain.handle("get-window-config", () => deps.getWindowConfig())
+  ipcMain.handle("consume-initial-deep-links", () => deps.consumeInitialDeepLinks())
   ipcMain.handle("get-default-server-url", () => deps.getDefaultServerUrl())
   ipcMain.handle("set-default-server-url", (_event: IpcMainInvokeEvent, url: string | null) =>
     deps.setDefaultServerUrl(url),
