@@ -17,9 +17,9 @@
 - [x] [High][M] Remove deferred terminal provider `disposeAll()` macrotask workaround unless a minimal repro proves it is still needed.
 - [x] [High][M] Remove `unsupportedWorkspace` null-object fallback for WSL `/mnt/` in `context/terminal.tsx`; block earlier or let PTY failure surface.
 - [x] [High][M] Fold or delete `packages/desktop-electron/src/main/wsl-pty.ts`; it has one importer and can live in `wsl.ts` if kept.
-- [ ] [High][L] Remove duplicated WSL state subscription in Electron renderer or `WslServersProvider`; keep one WSL state owner.
-- [ ] [High][L] Revisit `DefaultServer` context; fold into server ownership or make it a real provider instead of ad hoc query hooks.
-- [ ] [High][L] Collapse duplicated server health loops/logging across `ConnectionGate`, `ServerProvider`, dialog, and status popover.
+- [x] [High][L] Remove duplicated WSL state subscription in Electron renderer or `WslServersProvider`; keep one WSL state owner.
+- [x] [High][L] Revisit `DefaultServer` context; fold into server ownership or make it a real provider instead of ad hoc query hooks.
+- [x] [High][L] Collapse duplicated server health loops/logging across `ConnectionGate`, `ServerProvider`, dialog, and status popover.
 
 - [ ] [Medium][S] Remove `initialView?: "add-wsl"` from `DialogSelectServer` if no callsites need it.
 - [ ] [Medium][S] Remove `handleRemoveWsl`, `handleRetryWsl`, `handleUpdateWsl` guard helpers; callers already know when item is WSL.
@@ -48,7 +48,7 @@
 - [ ] [Medium][M] Collapse WSL persisted config + state mutations into one owner/path, or derive runtime state instead of mutating both.
 - [ ] [Medium][M] Remove bespoke WSL subscribe/unsubscribe IPC lifecycle if broadcast event pattern is acceptable.
 - [ ] [Medium][M] Collapse repeated WSL IPC method lists in `ipc.ts`, `index.ts`, and preload into one simpler mapping or smaller API surface.
-- [ ] [Medium][M] Remove duplicated health polling/sorting between status popover and server dialog; keep one or let dialog own detailed health.
+- [x] [Medium][M] Remove duplicated health polling/sorting between status popover and server dialog; keep one or let dialog own detailed health.
 - [ ] [Medium][M] Remove duplicated server-switch navigation/batching from status popover, dialog, and connection error; keep one simple path.
 
 - [ ] [Low][S] Revert dialog timer/lock refactor if it was style churn unrelated to behavior.

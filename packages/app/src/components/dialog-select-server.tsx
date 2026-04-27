@@ -12,7 +12,6 @@ import { batch, createEffect, createMemo, onCleanup, Show, startTransition, untr
 import { createStore, reconcile } from "solid-js/store"
 import { DialogWslServer } from "@/components/dialog-wsl-server"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
-import { useDefaultServer } from "@/context/default-server"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
 import { normalizeServerUrl, ServerConnection, useServer } from "@/context/server"
@@ -147,7 +146,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   const server = useServer()
   const platform = usePlatform()
   const language = useLanguage()
-  const { defaultKey, canDefault, setDefault } = useDefaultServer()
   const wslServers = useWslServers()
   const checkServerHealth = useCheckServerHealth()
   let disposed = false
@@ -274,7 +272,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     },
     onSuccess: async (key) => {
       server.remove(key)
-      if (defaultKey() === key) await setDefault(null)
+      if (server.defaultKey() === key) await server.setDefault(null)
     },
     onError: (err) => showRequestError(language, err),
   }))
@@ -549,7 +547,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
 
   async function handleRemove(key: ServerConnection.Key) {
     server.remove(key)
-    if (defaultKey() === key) await setDefault(null)
+    if (server.defaultKey() === key) await server.setDefault(null)
   }
 
   function handleRemoveWsl(conn: ServerConnection.Any) {
@@ -621,7 +619,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
               const wsl = isWslSidecar(i)
               const wslDistro = wsl ? i.distro : undefined
               const blocked = () => health(key)?.healthy === false
-              const canChangeDefault = () => canDefault() && i.type !== "ssh"
+              const canChangeDefault = () => server.canDefault() && i.type !== "ssh"
               const canRemove = () => i.type === "http" || wsl
               const hasMenuActionsBeforeDelete = () => canRemove() && (i.type === "http" || canChangeDefault() || canRetryWsl(i))
               const outdated = () => {
@@ -651,7 +649,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                     version={wslCheck(i)?.version ?? undefined}
                     class="flex items-center gap-3 min-w-0 flex-1"
                     badge={
-                      <Show when={defaultKey() === ServerConnection.key(i)}>
+                      <Show when={server.defaultKey() === ServerConnection.key(i)}>
                         <span class="text-text-base bg-surface-base text-14-regular px-1.5 rounded-xs">
                           {language.t("dialog.server.status.default")}
                         </span>
@@ -708,15 +706,15 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                                 <DropdownMenu.ItemLabel>Retry start</DropdownMenu.ItemLabel>
                               </DropdownMenu.Item>
                             </Show>
-                            <Show when={canChangeDefault() && defaultKey() !== key}>
-                              <DropdownMenu.Item onSelect={() => void setDefault(key)}>
+                            <Show when={canChangeDefault() && server.defaultKey() !== key}>
+                              <DropdownMenu.Item onSelect={() => void server.setDefault(key)}>
                                 <DropdownMenu.ItemLabel>
                                   {language.t("dialog.server.menu.default")}
                                 </DropdownMenu.ItemLabel>
                               </DropdownMenu.Item>
                             </Show>
-                            <Show when={canChangeDefault() && defaultKey() === key}>
-                              <DropdownMenu.Item onSelect={() => void setDefault(null)}>
+                            <Show when={canChangeDefault() && server.defaultKey() === key}>
+                              <DropdownMenu.Item onSelect={() => void server.setDefault(null)}>
                                 <DropdownMenu.ItemLabel>
                                   {language.t("dialog.server.menu.defaultRemove")}
                                 </DropdownMenu.ItemLabel>

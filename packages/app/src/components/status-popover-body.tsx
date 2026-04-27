@@ -6,17 +6,13 @@ import { Tabs } from "@opencode-ai/ui/tabs"
 import { useMutation } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
 import { useNavigate } from "@solidjs/router"
-import { type Accessor, batch, createEffect, createMemo, For, type JSXElement, onCleanup, Show, startTransition, untrack } from "solid-js"
-import { createStore, reconcile } from "solid-js/store"
-import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
-import { useDefaultServer } from "@/context/default-server"
+import { type Accessor, batch, createEffect, createMemo, For, type JSXElement, onCleanup, Show, startTransition } from "solid-js"
+import { createStore } from "solid-js/store"
+import { ServerRow } from "@/components/server/server-row"
 import { useLanguage } from "@/context/language"
 import { useSDK } from "@/context/sdk"
 import { ServerConnection, useServer } from "@/context/server"
 import { useSync } from "@/context/sync"
-import { useCheckServerHealth, type ServerHealth } from "@/utils/server-health"
-
-const pollMs = 10_000
 
 const pluginEmptyMessage = (value: string, file: string): JSXElement => {
   const parts = value.split(file)
@@ -28,72 +24,6 @@ const pluginEmptyMessage = (value: string, file: string): JSXElement => {
       {parts.slice(1).join(file)}
     </>
   )
-}
-
-const listServersByHealth = (
-  list: ServerConnection.Any[],
-  active: ServerConnection.Key | undefined,
-  status: Record<ServerConnection.Key, ServerHealth | undefined>,
-) => {
-  if (!list.length) return list
-  const order = new Map(list.map((url, index) => [url, index] as const))
-  const rank = (value?: ServerHealth) => {
-    if (value?.healthy === true) return 0
-    if (value?.healthy === false) return 2
-    return 1
-  }
-
-  return list.slice().sort((a, b) => {
-    if (ServerConnection.key(a) === active) return -1
-    if (ServerConnection.key(b) === active) return 1
-    const diff = rank(status[ServerConnection.key(a)]) - rank(status[ServerConnection.key(b)])
-    if (diff !== 0) return diff
-    return (order.get(a) ?? 0) - (order.get(b) ?? 0)
-  })
-}
-
-const useServerHealth = (servers: Accessor<ServerConnection.Any[]>, enabled: Accessor<boolean>) => {
-  const checkServerHealth = useCheckServerHealth()
-  const [status, setStatus] = createStore({} as Record<ServerConnection.Key, ServerHealth | undefined>)
-  const pollKey = createMemo(() =>
-    enabled()
-      ? servers()
-          .map((conn) =>
-            [ServerConnection.key(conn), conn.http.url, conn.http.username ?? "", conn.http.password ?? ""].join("\n"),
-          )
-          .join("\n\n")
-      : "",
-  )
-
-  createEffect(() => {
-    if (!enabled()) {
-      setStatus(reconcile({}))
-      return
-    }
-    pollKey()
-    const list = untrack(servers)
-    let dead = false
-
-    const refresh = async () => {
-      const results: Record<string, ServerHealth> = {}
-      await Promise.all(
-        list.map(async (conn) => {
-          results[ServerConnection.key(conn)] = await checkServerHealth(conn.http)
-        }),
-      )
-      if (dead) return
-      setStatus(reconcile(results))
-    }
-
-    void refresh()
-    const id = setInterval(() => void refresh(), pollMs)
-    onCleanup(() => {
-      dead = true
-      clearInterval(id)
-    })
-  })
-
-  return status
 }
 
 const useMcpToggleMutation = () => {
@@ -125,7 +55,6 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   const language = useLanguage()
   const navigate = useNavigate()
   const sdk = useSDK()
-  const defaultServer = useDefaultServer()
 
   const [load, setLoad] = createStore({
     lspDone: false,
@@ -193,8 +122,6 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
     if (list.every((item) => ServerConnection.key(item) !== ServerConnection.key(current))) return [current, ...list]
     return [current, ...list.filter((item) => ServerConnection.key(item) !== ServerConnection.key(current))]
   })
-  const health = useServerHealth(servers, props.shown)
-  const sortedServers = createMemo(() => listServersByHealth(servers(), server.key, health))
   const toggleMcp = useMcpToggleMutation()
   const mcpNames = createMemo(() => Object.keys(sync.data.mcp ?? {}).sort((a, b) => a.localeCompare(b)))
   const mcpStatus = (name: string) => sync.data.mcp?.[name]?.status
@@ -219,7 +146,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
       >
         <Tabs.List data-slot="tablist" class="bg-transparent border-b-0 px-4 pt-2 pb-0 gap-4 h-10">
           <Tabs.Trigger value="servers" data-slot="tab" class="text-12-regular">
-            {sortedServers().length > 0 ? `${sortedServers().length} ` : ""}
+            {servers().length > 0 ? `${servers().length} ` : ""}
             {language.t("status.popover.tab.servers")}
           </Tabs.Trigger>
           <Tabs.Trigger value="mcp" data-slot="tab" class="text-12-regular">
@@ -239,45 +166,35 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
         <Tabs.Content value="servers">
           <div class="flex flex-col px-2 pb-2">
             <div class="flex flex-col p-3 bg-background-base rounded-sm min-h-14">
-              <For each={sortedServers()}>
+              <For each={servers()}>
                 {(s) => {
                   const key = ServerConnection.key(s)
-                  const blocked = () => health[key]?.healthy === false
                   return (
                     <button
                       type="button"
-                      class="flex items-center gap-2 w-full h-8 pl-3 pr-1.5 py-1.5 rounded-md transition-colors text-left"
-                      classList={{
-                        "hover:bg-surface-raised-base-hover": !blocked(),
-                        "cursor-not-allowed": blocked(),
+                      class="flex items-center gap-2 w-full h-8 pl-3 pr-1.5 py-1.5 rounded-md transition-colors text-left hover:bg-surface-raised-base-hover"
+                      onClick={() => {
+                        startTransition(() => {
+                          batch(() => {
+                            if (server.key !== key) {
+                              if (typeof window !== "undefined" && window.history?.replaceState) {
+                                window.history.replaceState(null, "", "/")
+                              }
+                            } else {
+                              navigate("/")
+                            }
+                            server.setActive(key)
+                          })
+                        })
                       }}
-                       aria-disabled={blocked()}
-                       onClick={() => {
-                         if (blocked()) return
-                         startTransition(() => {
-                           batch(() => {
-                             if (server.key !== key) {
-                               if (typeof window !== "undefined" && window.history?.replaceState) {
-                                 window.history.replaceState(null, "", "/")
-                               }
-                             } else {
-                               navigate("/")
-                             }
-                             server.setActive(key)
-                           })
-                         })
-                        }}
-                     >
-                      <ServerHealthIndicator health={health[key]} />
+                    >
                       <ServerRow
                         conn={s}
-                        dimmed={blocked()}
-                        status={health[key]}
                         class="flex items-center gap-2 w-full min-w-0"
                         nameClass="text-14-regular text-text-base truncate"
                         versionClass="text-12-regular text-text-weak truncate"
                         badge={
-                          <Show when={key === defaultServer.defaultKey()}>
+                          <Show when={key === server.defaultKey()}>
                             <span class="text-11-regular text-text-base bg-surface-base px-1.5 py-0.5 rounded-md">
                               {language.t("common.default")}
                             </span>
@@ -301,10 +218,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
                   const run = ++dialogRun
                   void import("./dialog-select-server").then((x) => {
                     if (dialogDead || dialogRun !== run) return
-                    dialog.show(
-                      () => <x.DialogSelectServer onNavigateHome={() => navigate("/")} />,
-                      () => void defaultServer.query.refetch(),
-                    )
+                    dialog.show(() => <x.DialogSelectServer onNavigateHome={() => navigate("/")} />)
                   })
                 }}
               >

@@ -12,14 +12,9 @@ import { ThemeProvider } from "@opencode-ai/ui/theme/context"
 import { MetaProvider } from "@solidjs/meta"
 import { type BaseRouterProps, Navigate, Route, Router } from "@solidjs/router"
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
-import { Effect } from "effect"
 import {
-  batch,
   type Component,
-  createEffect,
   createMemo,
-  createResource,
-  createSignal,
   ErrorBoundary,
   For,
   type JSX,
@@ -51,7 +46,6 @@ import { WslServersProvider } from "@/context/wsl-servers"
 import DirectoryLayout from "@/pages/directory-layout"
 import Layout from "@/pages/layout"
 import { ErrorPage } from "./pages/error"
-import { useCheckServerHealth } from "./utils/server-health"
 
 const HomeRoute = lazy(() => import("@/pages/home"))
 const loadSession = () => import("@/pages/session")
@@ -167,47 +161,7 @@ export function AppBaseProviders(props: ParentProps<{ locale?: Locale }>) {
 
 function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean }>) {
   const server = useServer()
-  const checkServerHealth = useCheckServerHealth()
-
-  const [checkMode, setCheckMode] = createSignal<"blocking" | "background">("blocking")
-  const healthTarget = createMemo(() => {
-    const current = server.current
-    if (props.disableHealthCheck || !current) return ""
-    return [
-      ServerConnection.key(current),
-      current.type,
-      current.http.url,
-      current.http.username ?? "",
-      current.http.password ?? "",
-    ].join("\n")
-  })
-
-  createEffect(() => {
-    healthTarget()
-    setCheckMode("blocking")
-  })
-
-  // performs repeated health check with a grace period for
-  // non-http connections, otherwise fails instantly
-  const [startupHealthCheck, healthCheckActions] = createResource(
-    healthTarget,
-    () =>
-      props.disableHealthCheck
-        ? true
-        : Effect.gen(function* () {
-            if (!server.current) return true
-            const { http, type } = server.current
-            while (true) {
-              const res = yield* Effect.promise(() => checkServerHealth(http))
-              if (res.healthy) return true
-              if (checkMode() === "background" || type === "http") return false
-            }
-          }).pipe(
-            Effect.timeoutOrElse({ duration: "10 seconds", orElse: () => Effect.succeed(false) }),
-            Effect.ensuring(Effect.sync(() => setCheckMode("background"))),
-            Effect.runPromise,
-          ),
-  )
+  const healthy = createMemo(() => props.disableHealthCheck || server.healthy())
 
   const splash = (
     <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base">
@@ -218,23 +172,14 @@ function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean }>) {
   return (
     <Show when={server.ready()} fallback={splash}>
       <Suspense fallback={splash}>
-        <Show
-          when={checkMode() === "blocking" ? !startupHealthCheck.loading : startupHealthCheck.state !== "pending"}
-          fallback={splash}
-        >
+        <Show when={healthy() !== undefined} fallback={splash}>
           <Show
-            when={startupHealthCheck()}
+            when={healthy()}
             fallback={
               <ConnectionError
-                onRetry={() => {
-                  if (checkMode() === "background") void healthCheckActions.refetch()
-                }}
                 onServerSelected={(key) => {
                   startTransition(() => {
-                    batch(() => {
-                      setCheckMode("blocking")
-                      server.setActive(key)
-                    })
+                    server.setActive(key)
                   })
                 }}
               />
@@ -248,7 +193,7 @@ function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean }>) {
   )
 }
 
-function ConnectionError(props: { onRetry?: () => void; onServerSelected?: (key: ServerConnection.Key) => void }) {
+function ConnectionError(props: { onServerSelected?: (key: ServerConnection.Key) => void }) {
   const dialog = useDialog()
   const language = useLanguage()
   const platform = usePlatform()
@@ -258,9 +203,6 @@ function ConnectionError(props: { onRetry?: () => void; onServerSelected?: (key:
   const serverToken = "\u0000server\u0000"
   const unreachable = createMemo(() => language.t("app.server.unreachable", { server: serverToken }).split(serverToken))
   const canManage = createMemo(() => server.current?.type === "sidecar" && server.current?.variant === "wsl")
-
-  const timer = setInterval(() => props.onRetry?.(), 1000)
-  onCleanup(() => clearInterval(timer))
 
   return (
     <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base gap-6 p-6">

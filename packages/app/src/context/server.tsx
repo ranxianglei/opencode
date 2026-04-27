@@ -1,8 +1,11 @@
+import { showToast } from "@opencode-ai/ui/toast"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { type Accessor, batch, createEffect, createMemo, onCleanup, untrack } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"
 import { useCheckServerHealth } from "@/utils/server-health"
+import { useLanguage } from "./language"
+import { usePlatform } from "./platform"
 
 type StoredProject = { worktree: string; expanded: boolean }
 type StoredServer = string | ServerConnection.HttpBase | ServerConnection.Http
@@ -101,6 +104,8 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
     servers?: Array<ServerConnection.Any>
   }) => {
     const checkServerHealth = useCheckServerHealth()
+    const language = useLanguage()
+    const platform = usePlatform()
     const serversReady = () => props.serversReady ?? true
 
     const [store, setStore, _, ready] = persisted(
@@ -139,6 +144,7 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
 
     const [state, setState] = createStore({
       active: props.defaultServer,
+      default: props.defaultServer as ServerConnection.Key | null,
       healthy: undefined as boolean | undefined,
     })
 
@@ -171,6 +177,22 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
 
     function setActive(input: ServerConnection.Key) {
       if (state.active !== input) setState("active", input)
+    }
+
+    async function setDefault(input: ServerConnection.Key | null) {
+      if (!platform.setDefaultServer) return input
+      try {
+        await platform.setDefaultServer(input)
+        setState("default", input)
+        return input
+      } catch (err) {
+        showToast({
+          variant: "error",
+          title: language.t("common.requestFailed"),
+          description: err instanceof Error ? err.message : String(err),
+        })
+        throw err
+      }
     }
 
     function nextActiveKey(exclude?: ServerConnection.Key) {
@@ -286,6 +308,13 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       get current() {
         return current()
       },
+      canDefault() {
+        return !!platform.getDefaultServer && !!platform.setDefaultServer
+      },
+      defaultKey() {
+        return state.default
+      },
+      setDefault,
       setActive,
       add,
       remove,

@@ -65,12 +65,11 @@ import {
   PlatformProvider,
   ServerConnection,
   useCommand,
-  type WslServersEvent,
-  type WslServersState,
+  useWslServers,
 } from "@opencode-ai/app"
 import type { AsyncStorage } from "@solid-primitives/storage"
 import { MemoryRouter } from "@solidjs/router"
-import { createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js"
+import { createEffect, createMemo, createResource, onCleanup, onMount } from "solid-js"
 import { render } from "solid-js/web"
 import pkg from "../../package.json"
 import { initI18n, t } from "./i18n"
@@ -354,24 +353,6 @@ render(() => {
 
   const [defaultServer] = createResource(() => platform.getDefaultServer?.())
   const [locale] = createResource(loadLocale)
-  const [wslServers, setWslServers] = createSignal<WslServersState | undefined>()
-  const [wslReady, setWslReady] = createSignal(!platform.wslServers)
-  if (platform.wslServers) {
-    void platform.wslServers
-      .getState()
-      .then((state) => {
-        setWslServers(state)
-        setWslReady(true)
-      })
-      .catch(() => {
-        setWslReady(true)
-      })
-    const off = platform.wslServers.subscribe((event: WslServersEvent) => {
-      setWslServers(event.state)
-      setWslReady(true)
-    })
-    onCleanup(off)
-  }
 
   function handleClick(e: MouseEvent) {
     const link = (e.target as HTMLElement).closest("a.external-link") as HTMLAnchorElement | null
@@ -400,6 +381,7 @@ render(() => {
   }
 
   function App() {
+    const wslServers = useWslServers()
     const splash = (
       <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base">
         <Splash class="w-16 h-20 opacity-50 animate-pulse" />
@@ -428,7 +410,7 @@ render(() => {
           },
         })
       }
-      for (const item of wslServers()?.servers ?? []) {
+      for (const item of wslServers.data?.servers ?? []) {
         const runtime = item.runtime
         if (runtime.kind !== "ready") continue
         list.push({
@@ -453,7 +435,7 @@ render(() => {
     return (
       <AppInterface
         defaultServer={defaultServer.latest ?? ServerConnection.Key.make(startup.latest?.sidecar?.local.key ?? "local:windows")}
-        serversReady={wslReady()}
+        serversReady={!platform.wslServers || !wslServers.isPending}
         servers={servers()}
         router={MemoryRouter}
       >
