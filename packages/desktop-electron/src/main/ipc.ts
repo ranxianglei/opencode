@@ -22,18 +22,6 @@ const pickerFilters = (ext?: string[]) => {
 }
 
 type Deps = {
-  httpFetch: (input: {
-    url: string
-    method: string
-    headers: Record<string, string>
-    body?: string
-    timeoutMs?: number
-  }) => Promise<{
-    status: number
-    statusText: string
-    headers: Record<string, string>
-    body: string
-  }>
   killSidecar: () => void
   relaunch: () => void
   awaitInitialization: (sendStep: (step: InitStep) => void) => Promise<ServerReadyData>
@@ -130,13 +118,6 @@ export function registerIpcHandlers(deps: Deps) {
     wslSubscriptions.clear()
   })
 
-  handle(
-    "http-fetch",
-    (
-      _event: IpcMainInvokeEvent,
-      input: { url: string; method: string; headers: Record<string, string>; body?: string; timeoutMs?: number },
-    ) => deps.httpFetch(input),
-  )
   handle("kill-sidecar", () => deps.killSidecar())
   handle("await-initialization", (event: IpcMainInvokeEvent) => {
     const send = (step: InitStep) => event.sender.send("init-step", step)

@@ -1,0 +1,64 @@
+# PR Simplification TODO
+
+- [x] [High][S] Remove fake WSL `.invalid` server entries from `packages/desktop-electron/src/renderer/index.tsx`; only include ready WSL servers in `servers()`.
+- [x] [High][S] Delete `isPlaceholderServerUrl` usage/guards after removing fake WSL servers: `server-health.ts`, `context/server.tsx`, `dialog-select-server.tsx`, `status-popover-body.tsx`, `app.tsx`.
+- [x] [High][S] Remove destructive missing-distro auto-delete in `packages/desktop-electron/src/main/wsl-servers.ts`; mark runtime failed and let the user remove it manually.
+- [ ] ~~[High][S] Revisit `versionOlderThan()` in `dialog-select-server.tsx`; keep newer-vs-older semantics or move comparison to backend state.~~ (Skipped for now)
+- [x] [High][S] Remove `dismissOutside` shared UI prop and usage; it is one-off and incomplete because Escape still closes globally.
+- [x] [High][S] Remove `cachedServerStatus` from `dialog-select-server.tsx`; `useCheckServerHealth()` already caches and this cache can go stale across credential edits.
+- [x] [High][S] Remove `pendingSelectKey` WSL selection sync from `dialog-select-server.tsx`; select immediately if present or close/let list refresh.
+- [x] [High][S] Delete `withWslApi()` silent fallback in `dialog-wsl-server.tsx`; only mount the dialog when `platform.wslServers` exists.
+- [x] [High][M] Remove the 8-9 `useMutation` pass-through wrappers in `dialog-wsl-server.tsx`; use the existing `run()` helper and direct API calls.
+- [ ] ~~[High][M] Remove `autoProbe` / `lastAutoProbe` state machine from `dialog-wsl-server.tsx` unless a repro proves automatic probing is required.~~ (Skipped for now: wizard currently relies on automatic initial probes)
+- [x] [High][M] Remove Electron renderer `storedServers` / `hasFallbackServers` raw storage parsing fallback in `packages/desktop-electron/src/renderer/index.tsx`.
+- [x] [High][M] Decide whether to delete the Electron `httpFetch` bridge entirely and use normal fetch; current bridge duplicates fetch semantics and adds IPC surface.
+- [x] [High][M] Remove terminal restore preflight (`pty.get()` before websocket) in `components/terminal.tsx`; it duplicates the existing clone-on-connect-error path.
+- [x] [High][M] Remove server-key from in-memory terminal cache in `context/terminal.tsx`; `TerminalProvider` is already under keyed `ServerKey` remount.
+- [x] [High][M] Remove deferred terminal provider `disposeAll()` macrotask workaround unless a minimal repro proves it is still needed.
+- [x] [High][M] Remove `unsupportedWorkspace` null-object fallback for WSL `/mnt/` in `context/terminal.tsx`; block earlier or let PTY failure surface.
+- [x] [High][M] Fold or delete `packages/desktop-electron/src/main/wsl-pty.ts`; it has one importer and can live in `wsl.ts` if kept.
+- [ ] [High][L] Remove duplicated WSL state subscription in Electron renderer or `WslServersProvider`; keep one WSL state owner.
+- [ ] [High][L] Revisit `DefaultServer` context; fold into server ownership or make it a real provider instead of ad hoc query hooks.
+- [ ] [High][L] Collapse duplicated server health loops/logging across `ConnectionGate`, `ServerProvider`, dialog, and status popover.
+
+- [ ] [Medium][S] Remove `initialView?: "add-wsl"` from `DialogSelectServer` if no callsites need it.
+- [ ] [Medium][S] Remove `handleRemoveWsl`, `handleRetryWsl`, `handleUpdateWsl` guard helpers; callers already know when item is WSL.
+- [ ] [Medium][S] Remove `hasMenuActionsBeforeDelete()` from `dialog-select-server.tsx`; inline or always render the separator in the delete block.
+- [x] [Medium][S] Remove UI-only `parseProgressPercent()` and percent display in WSL wizard unless progress is structured by backend.
+- [ ] [Medium][S] Remove hard-coded Ubuntu installable distro special-case from UI; backend/platform should return installable distros.
+- [ ] [Medium][S] Remove `isHiddenDistro()` UI filter for `docker-desktop`; backend/platform should decide hidden distros if needed.
+- [x] [Medium][S] Remove `installProgress()` transcript shaping in WSL wizard; render raw transcript or structured progress.
+- [ ] [Medium][S] Remove `stepIndex` / `stepTitle` / `stepState` helpers in WSL wizard; inline the 3-step UI state.
+- [ ] [Medium][S] Remove `runWslBash()` from `wsl.ts`; it is unused.
+- [x] [Medium][S] Remove progress-line de-duping from either `wsl-pty.ts` or `wsl-servers.ts`; keep only one place if kept.
+- [ ] [Medium][S] Remove `ensureLoopbackNoProxy()` and Chromium proxy-bypass mutation unless a measured proxy repro exists.
+- [ ] [Medium][S] Remove broad renderer global error/rejection logging in Electron renderer unless this PR intentionally adds diagnostics.
+- [ ] [Medium][S] Remove `wireWindowDiagnostics()` or move it to a separate diagnostics PR; it is unrelated WSL feature plumbing.
+- [ ] [Medium][S] Remove terminal debug logging helpers/calls once current investigation is done.
+- [ ] [Medium][S] Remove server-health retry logging helpers (`serializeError`, `stringifyLog`, per-attempt logs`) or dev-gate one final warning.
+- [ ] [Medium][S] Remove `resolveSystem32Command()` if no PATH failure is proven; call `wsl.exe` directly.
+- [ ] [Medium][S] Remove WSL path picker catch fallbacks in Electron renderer; for active WSL, failed conversion should fail, not pass Windows paths through.
+- [ ] [Medium][M] Remove `createOutputDecoder()` / `detectOutputEncoding()` heuristic unless logs prove UTF-16 WSL output occurs.
+- [ ] [Medium][M] Remove registry parsing/default-user discovery in `wsl.ts` if not proven necessary; use the actual WSL command context consistently.
+- [ ] [Medium][M] Simplify `resolveWslOpencode()` fallback path search; prefer `command -v opencode` unless installer/PATH proves otherwise.
+- [ ] [Medium][M] Simplify WSL sidecar shell script env/path/watchman workarounds in `server.ts`; add back only with repro/logs.
+- [ ] [Medium][M] Remove `startAttempts` stale-start guard in WSL controller unless start/remove/stop race is reproduced.
+- [ ] [Medium][M] Remove `acknowledgements` model/API/IPC if UI does not consume it.
+- [ ] [Medium][M] Remove `Promise.allSettled` distro-list fallback; let listing errors surface instead of showing empty distros.
+- [ ] [Medium][M] Collapse WSL persisted config + state mutations into one owner/path, or derive runtime state instead of mutating both.
+- [ ] [Medium][M] Remove bespoke WSL subscribe/unsubscribe IPC lifecycle if broadcast event pattern is acceptable.
+- [ ] [Medium][M] Collapse repeated WSL IPC method lists in `ipc.ts`, `index.ts`, and preload into one simpler mapping or smaller API surface.
+- [ ] [Medium][M] Remove duplicated health polling/sorting between status popover and server dialog; keep one or let dialog own detailed health.
+- [ ] [Medium][M] Remove duplicated server-switch navigation/batching from status popover, dialog, and connection error; keep one simple path.
+
+- [ ] [Low][S] Revert dialog timer/lock refactor if it was style churn unrelated to behavior.
+- [ ] [Low][S] Revert global dialog CSS overflow changes unless required by a specific dialog.
+- [ ] [Low][S] Inline `nextActiveKey()` in `context/server.tsx` unless more callers appear.
+- [ ] [Low][S] Add `ServerConnection.isWsl(conn)` only if it deletes more local type guards than it adds; otherwise keep local checks.
+- [ ] [Low][S] Replace manual `wsl:${distro}` key construction with returned config id or existing `ServerConnection.key` only where already touching code.
+- [ ] [Low][S] Remove duplicate line-forwarding helper in `server.ts` or reuse existing WSL output handling.
+- [ ] [Low][S] Remove `pickerFilters()` duplication only if there is an existing shared helper safe for Electron main.
+- [ ] [Low][M] Remove duplicate top-level fields from `ServerReadyData` if Electron/Tauri compatibility allows it.
+- [ ] [Low][M] Consider moving WSL wizard out of embedded server-select mode; current `showWizard`/fit/body/dismiss state duplicates dialog flow.
+- [ ] [Low][L] Consider deleting/folding `context/wsl-servers.tsx` if WSL state stays owned by Electron renderer or server context.
+- [ ] [Low][L] Consider deleting/folding `context/default-server.tsx` if default server becomes part of `useServer()`.

@@ -11,11 +11,9 @@ import type {
   WslServerRuntime,
   WslServersEvent,
   WslServersState,
-  WslTranscriptLine,
 } from "../preload/types"
 import { LEGACY_LOCAL_SERVER_KEY, WSL_SERVERS_KEY } from "./constants"
 import { getStore } from "./store"
-import type { WslCommandLine } from "./wsl"
 import {
   installWslDistro,
   installWslOpencode,
@@ -63,26 +61,10 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
     for (const listener of listeners) listener({ type: "state", state })
   }
 
-  const isProgressLine = (text: string) => {
-    return text.includes("[") && text.includes("]") && /(\d{1,3}(?:[.,]\d+)?)\s*%/.test(text)
-  }
-
   const setState = (next: Partial<WslServersState>) => {
     state = { ...state, ...next }
     emit()
   }
-
-  const appendTranscript = (line: Omit<WslTranscriptLine, "at">) => {
-    const next = { ...line, at: Date.now() }
-    const last = state.transcript.at(-1)
-    if (last && last.stream === line.stream && isProgressLine(last.text) && isProgressLine(line.text)) {
-      setState({ transcript: [...state.transcript.slice(0, -1), next] })
-      return
-    }
-    setState({ transcript: [...state.transcript, next] })
-  }
-
-  const clearTranscript = () => setState({ transcript: [] })
 
   const persistServers = (servers: WslServerConfig[]) => {
     getStore().set(WSL_SERVERS_KEY, { servers })
@@ -93,22 +75,19 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
     setState({ servers: next })
   }
 
-  const beginJob = (job: WslJob, opts: { keepTranscript?: boolean } = {}): AbortController => {
+  const beginJob = (job: WslJob): AbortController => {
     jobAbort?.abort()
     const abort = new AbortController()
     jobAbort = abort
-    if (!opts.keepTranscript) clearTranscript()
-    setState({ job, lastError: null })
+    setState({ job })
     return abort
   }
 
-  const endJob = (abort: AbortController, error?: Error | null) => {
+  const endJob = (abort: AbortController) => {
     if (jobAbort !== abort) return
     jobAbort = undefined
-    setState({ job: null, lastError: error?.message ?? null })
+    setState({ job: null })
   }
-
-  const onLine = (line: WslCommandLine) => appendTranscript(line)
 
   const refreshFromStore = () => {
     const persisted = readPersistedServers()
@@ -126,12 +105,6 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
     updateServer(id, (item) => ({ ...item, runtime }))
   }
 
-  const removeMissingServer = (id: string) => {
-    const remaining = readPersistedServers().filter((item) => item.id !== id)
-    persistServers(remaining)
-    setState({ servers: state.servers.filter((item) => item.config.id !== id) })
-  }
-
   const setOpencodeCheck = (distro: string, check: WslOpencodeCheck) => {
     setState({
       opencodeChecks: {
@@ -141,16 +114,13 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
     })
   }
 
-  const refreshOpencodeCheck = async (
-    distro: string,
-    opts?: { signal?: AbortSignal; onLine?: (line: WslCommandLine) => void },
-  ) => {
+  const refreshOpencodeCheck = async (distro: string, opts?: { signal?: AbortSignal }) => {
     const resolved = await resolveWslOpencode(distro, opts)
     const version = resolved ? await readWslCommandVersion(resolved, distro, opts) : null
     setOpencodeCheck(distro, opencodeCheck(distro, resolved, version, appVersion))
   }
 
-  const refreshDistroLists = async (opts: { signal?: AbortSignal; onLine?: (line: WslCommandLine) => void }) => {
+  const refreshDistroLists = async (opts: { signal?: AbortSignal }) => {
     const [installedResult, onlineResult] = await Promise.allSettled([
       listInstalledWslDistros(opts),
       listOnlineWslDistros(opts),
@@ -215,11 +185,6 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       if (!isCurrentStartAttempt(id, attempt)) return
-      if (isMissingDistroError(message)) {
-        removeMissingServer(id)
-        logger?.error("wsl server removed after missing distro", { id, distro: item.config.distro, message })
-        return
-      }
       setRuntime(id, { kind: "failed", message })
       // Without this, an Ubuntu-style silent failure leaves no trace in
       // main.log — the controller captures the message in its state but
@@ -251,7 +216,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
         return undefined
       }
       const err = error instanceof Error ? error : new Error(String(error))
-      endJob(abort, err)
+      endJob(abort)
       throw err
     }
   }
@@ -272,8 +237,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
 
     async probeRuntime() {
       await runJob({ kind: "runtime", startedAt: Date.now() }, async (abort) => {
-        appendTranscript({ stream: "system", text: "Checking WSL runtime" })
-        const runtime = await probeWslRuntime({ signal: abort.signal, onLine })
+        const runtime = await probeWslRuntime({ signal: abort.signal })
         setState({
           runtime,
           pendingRestart: state.pendingRestart && !runtime.available ? state.pendingRestart : false,
@@ -283,15 +247,13 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
 
     async refreshDistros() {
       await runJob({ kind: "distros", startedAt: Date.now() }, async (abort) => {
-        appendTranscript({ stream: "system", text: "Listing WSL distros" })
-        setState(await refreshDistroLists({ signal: abort.signal, onLine }))
+        setState(await refreshDistroLists({ signal: abort.signal }))
       })
     },
 
     async installWsl() {
       await runJob({ kind: "install-wsl", startedAt: Date.now() }, async (abort) => {
-        appendTranscript({ stream: "system", text: "Installing WSL runtime" })
-        const result = await installWslRuntimeElevated({ signal: abort.signal, onLine })
+        const result = await installWslRuntimeElevated({ signal: abort.signal })
         if (result.code !== 0) {
           const message = summarize(result.stderr || result.stdout) || "WSL installation failed"
           throw new Error(message)
@@ -299,7 +261,7 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
         const pendingRestart = wslNeedsRestart(result)
         setState({ pendingRestart })
         if (!pendingRestart) {
-          const runtime = await probeWslRuntime({ signal: abort.signal, onLine })
+          const runtime = await probeWslRuntime({ signal: abort.signal })
           setState({ runtime })
         }
       })
@@ -307,14 +269,13 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
 
     async installDistro(name: string) {
       await runJob({ kind: "install-distro", distro: name, startedAt: Date.now() }, async (abort) => {
-        appendTranscript({ stream: "system", text: `Installing WSL distro: ${name}` })
-        const result = await installWslDistro(name, { signal: abort.signal, onLine })
+        const result = await installWslDistro(name, { signal: abort.signal })
         if (result.code !== 0) {
           const message = summarize(result.stderr || result.stdout) || `Failed to install distro: ${name}`
           throw new Error(message)
         }
-        const distros = await refreshDistroLists({ signal: abort.signal, onLine })
-        const probe = await probeWslDistro(name, { signal: abort.signal, onLine })
+        const distros = await refreshDistroLists({ signal: abort.signal })
+        const probe = await probeWslDistro(name, { signal: abort.signal })
         setState({
           ...distros,
           distroProbes: { ...state.distroProbes, [name]: probe },
@@ -324,34 +285,31 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
 
     async probeDistro(name: string) {
       await runJob({ kind: "probe-distro", distro: name, startedAt: Date.now() }, async (abort) => {
-        appendTranscript({ stream: "system", text: `Checking ${name}` })
-        const probe = await probeWslDistro(name, { signal: abort.signal, onLine })
+        const probe = await probeWslDistro(name, { signal: abort.signal })
         setState({ distroProbes: { ...state.distroProbes, [name]: probe } })
       })
     },
 
     async probeOpencode(name: string) {
       await runJob({ kind: "probe-opencode", distro: name, startedAt: Date.now() }, async (abort) => {
-        appendTranscript({ stream: "system", text: `Checking OpenCode in ${name}` })
-        await refreshOpencodeCheck(name, { signal: abort.signal, onLine })
+        await refreshOpencodeCheck(name, { signal: abort.signal })
       })
     },
 
     async installOpencode(name: string) {
       await runJob({ kind: "install-opencode", distro: name, startedAt: Date.now() }, async (abort) => {
-        appendTranscript({ stream: "system", text: `Installing OpenCode in ${name}` })
-        const resolved = await resolveWslOpencode(name, { signal: abort.signal, onLine })
+        const resolved = await resolveWslOpencode(name, { signal: abort.signal })
         const existingVersion = resolved
-          ? await readWslCommandVersion(resolved, name, { signal: abort.signal, onLine })
+          ? await readWslCommandVersion(resolved, name, { signal: abort.signal })
           : null
         const result =
           resolved && existingVersion
-            ? await upgradeWslOpencode(appVersion, resolved, name, { signal: abort.signal, onLine })
-            : await installWslOpencode(appVersion, name, { signal: abort.signal, onLine })
+            ? await upgradeWslOpencode(appVersion, resolved, name, { signal: abort.signal })
+            : await installWslOpencode(appVersion, name, { signal: abort.signal })
         if (result.code !== 0) {
           throw new Error(summarize(result.stderr || result.stdout) || "OpenCode installation failed")
         }
-        await refreshOpencodeCheck(name, { signal: abort.signal, onLine })
+        await refreshOpencodeCheck(name, { signal: abort.signal })
       })
     },
 
@@ -362,7 +320,6 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
     async cancelJob() {
       jobAbort?.abort()
       jobAbort = undefined
-      appendTranscript({ stream: "system", text: "Canceled" })
       setState({ job: null })
     },
 
@@ -433,8 +390,6 @@ function initialState(): WslServersState {
     pendingRestart: false,
     servers: [],
     job: null,
-    transcript: [],
-    lastError: null,
   }
 }
 
@@ -529,10 +484,6 @@ function opencodeCheck(
     matchesDesktop: version === expectedVersion,
     error: null,
   }
-}
-
-function isMissingDistroError(message: string) {
-  return /WSL_E_DISTRO_NOT_FOUND|There is no distribution with the supplied name/i.test(message)
 }
 
 function startupFailure(code: number | null, signal: NodeJS.Signals | null) {

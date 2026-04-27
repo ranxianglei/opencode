@@ -1,12 +1,11 @@
 import { Button } from "@opencode-ai/ui/button"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Spinner } from "@opencode-ai/ui/spinner"
-import { useMutation } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
 import { createEffect, createMemo, For, Match, onCleanup, Show, Switch } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLanguage } from "@/context/language"
-import type { WslServersPlatform, WslServerStep } from "@/context/platform"
+import type { WslServerStep } from "@/context/platform"
 import { usePlatform } from "@/context/platform"
 import { useWslServers } from "@/context/wsl-servers"
 
@@ -14,14 +13,6 @@ const STEPS: WslServerStep[] = ["wsl", "distro", "opencode"]
 
 function isHiddenDistro(name: string) {
   return /^docker-desktop(?:-data)?$/i.test(name)
-}
-
-function parseProgressPercent(text: string) {
-  const match = text.match(/(\d{1,3}(?:[.,]\d+)?)\s*%/)
-  if (!match) return null
-  const value = Number.parseFloat(match[1]!.replace(",", "."))
-  if (!Number.isFinite(value)) return null
-  return Math.max(0, Math.min(99, Math.floor(value)))
 }
 
 interface DialogWslServerProps {
@@ -33,6 +24,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
   const platform = usePlatform()
   const dialog = useDialog()
   const wslServers = useWslServers()
+  const api = platform.wslServers!
   const [store, setStore] = createStore({
     step: undefined as WslServerStep | undefined,
     selectedDistro: null as string | null,
@@ -40,12 +32,6 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
     adding: false,
   })
   const current = () => wslServers.data
-  const wslApi = () => platform.wslServers
-  const withWslApi = async <T,>(run: (api: WslServersPlatform) => Promise<T>) => {
-    const api = wslApi()
-    if (!api) return
-    return run(api)
-  }
   let disposed = false
   onCleanup(() => {
     disposed = true
@@ -104,15 +90,6 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
   })
   const installTarget = createMemo(() => installableDistros().find((item) => item.name === store.installTarget) ?? null)
   const installingDistro = createMemo(() => current()?.job?.kind === "install-distro")
-  const installDistroPercent = createMemo(() => {
-    if (!installingDistro()) return null
-    const transcript = current()?.transcript ?? []
-    for (let i = transcript.length - 1; i >= 0; i--) {
-      const percent = parseProgressPercent(transcript[i]!.text)
-      if (percent !== null) return percent
-    }
-    return null
-  })
   const wslReady = createMemo(() => !!current()?.runtime?.available && !current()?.pendingRestart)
   const distroReady = createMemo(() => {
     const probe = selectedProbe()
@@ -135,58 +112,22 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
   // them back when a probe result updates recommendedStep.
   const activeStep = createMemo(() => store.step ?? recommendedStep())
 
-  const probeRuntimeMutation = useMutation(() => ({
-    mutationFn: () => withWslApi((api) => api.probeRuntime()),
-  }))
-
-  const refreshDistrosMutation = useMutation(() => ({
-    mutationFn: () => withWslApi((api) => api.refreshDistros()),
-  }))
-
-  const installWslMutation = useMutation(() => ({
-    mutationFn: () => withWslApi((api) => api.installWsl()),
-  }))
-
-  const installDistroMutation = useMutation(() => ({
-    mutationFn: (name: string) => withWslApi((api) => api.installDistro(name)),
-  }))
-
-  const probeDistroMutation = useMutation(() => ({
-    mutationFn: (name: string) => withWslApi((api) => api.probeDistro(name)),
-  }))
-
-  const probeOpencodeMutation = useMutation(() => ({
-    mutationFn: (name: string) => withWslApi((api) => api.probeOpencode(name)),
-  }))
-
-  const installOpencodeMutation = useMutation(() => ({
-    mutationFn: (name: string) => withWslApi((api) => api.installOpencode(name)),
-  }))
-
-  const openTerminalMutation = useMutation(() => ({
-    mutationFn: (name: string) => withWslApi((api) => api.openTerminal(name)),
-  }))
-
-  const addServerMutation = useMutation(() => ({
-    mutationFn: (distro: string) => withWslApi((api) => api.addServer(distro)),
-  }))
-
   const autoProbe = createMemo(() => {
     const state = current()
-    if (!state || !wslApi() || busy()) return null
+    if (!state || busy()) return null
     if (state.pendingRestart) return null
-    if (!state.runtime) return { key: "runtime", run: () => probeRuntimeMutation.mutateAsync() }
+    if (!state.runtime) return { key: "runtime", run: () => api.probeRuntime() }
     if (!wslReady()) return null
     if (!state.installed.length && !state.online.length) {
-      return { key: "distros", run: () => refreshDistrosMutation.mutateAsync() }
+      return { key: "distros", run: () => api.refreshDistros() }
     }
     const distro = store.selectedDistro
     if (distro && !state.distroProbes[distro]) {
-      return { key: `probe-distro:${distro}`, run: () => probeDistroMutation.mutateAsync(distro) }
+      return { key: `probe-distro:${distro}`, run: () => api.probeDistro(distro) }
     }
     if (!distro || !distroReady()) return null
     if (!state.opencodeChecks[distro]) {
-      return { key: `probe-opencode:${distro}`, run: () => probeOpencodeMutation.mutateAsync(distro) }
+      return { key: `probe-opencode:${distro}`, run: () => api.probeOpencode(distro) }
     }
     return null
   })
@@ -266,18 +207,6 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
     return distro ? `Install OpenCode in ${distro}.` : "Choose a distro first."
   })
 
-  const installProgress = createMemo(() => {
-    const state = current()
-    if (!state?.job) return null
-    const transcript = state.transcript.filter((line) => line.text.trim())
-    const title = transcript[0]?.text
-    if (!title?.startsWith("Installing ")) return null
-    return {
-      title,
-      lines: transcript.slice(1).slice(-8),
-    }
-  })
-
   const run = async (action: () => Promise<unknown>) => {
     try {
       await action()
@@ -302,7 +231,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
     if (!distro) return
     setStore("adding", true)
     try {
-      await addServerMutation.mutateAsync(distro)
+      await api.addServer(distro)
       if (props.onAdded) {
         await props.onAdded(distro)
       } else {
@@ -370,7 +299,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                     variant="secondary"
                     size="large"
                     disabled={busy()}
-                    onClick={() => void run(() => installWslMutation.mutateAsync())}
+                    onClick={() => void run(() => api.installWsl())}
                   >
                     Install WSL
                   </Button>
@@ -402,7 +331,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                     variant="ghost"
                     size="small"
                     disabled={busy()}
-                    onClick={() => runSelectedDistro((distro) => probeDistroMutation.mutateAsync(distro))}
+                    onClick={() => runSelectedDistro((distro) => api.probeDistro(distro))}
                   >
                     Refresh
                   </Button>
@@ -446,11 +375,6 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                   <div class="px-1 flex items-center justify-between gap-3">
                     <div class="text-12-medium text-text-weak">Install</div>
                     <div class="flex items-center gap-2 shrink-0">
-                      <Show when={installingDistro() && installDistroPercent() !== null}>
-                        <span class="text-12-regular text-text-weak shrink-0 tabular-nums min-w-[3ch] text-right">
-                          {installDistroPercent()}%
-                        </span>
-                      </Show>
                       <Show when={installingDistro()}>
                         <Spinner class="h-4 w-4 text-icon-info-base shrink-0" />
                       </Show>
@@ -458,7 +382,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                         variant="secondary"
                         size="small"
                         disabled={busy() || !installTarget()}
-                        onClick={() => void run(() => installDistroMutation.mutateAsync(installTarget()!.name))}
+                        onClick={() => void run(() => api.installDistro(installTarget()!.name))}
                       >
                         {installingDistro() ? "Installing..." : "Install"}
                       </Button>
@@ -531,7 +455,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                   variant="secondary"
                   size="large"
                   disabled={busy() || !selectedInstalled()}
-                  onClick={() => runSelectedDistro((distro) => openTerminalMutation.mutateAsync(distro))}
+                  onClick={() => runSelectedDistro((distro) => api.openTerminal(distro))}
                 >
                   Open terminal
                 </Button>
@@ -539,7 +463,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                   variant="ghost"
                   size="large"
                   disabled={busy() || !store.selectedDistro}
-                  onClick={() => runSelectedDistro((distro) => probeDistroMutation.mutateAsync(distro))}
+                  onClick={() => runSelectedDistro((distro) => api.probeDistro(distro))}
                 >
                   Refresh
                 </Button>
@@ -568,7 +492,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                       variant="ghost"
                       size="large"
                       disabled={busy()}
-                      onClick={() => runSelectedDistro((distro) => probeOpencodeMutation.mutateAsync(distro))}
+                      onClick={() => runSelectedDistro((distro) => api.probeOpencode(distro))}
                     >
                       Refresh
                     </Button>
@@ -578,7 +502,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                       variant="secondary"
                       size="large"
                       disabled={busy()}
-                      onClick={() => runSelectedDistro((distro) => installOpencodeMutation.mutateAsync(distro))}
+                      onClick={() => runSelectedDistro((distro) => api.installOpencode(distro))}
                     >
                       {opencodeCheck()?.resolvedPath ? "Update OpenCode" : "Install OpenCode"}
                     </Button>
@@ -605,47 +529,6 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
             </div>
           </Match>
           </Switch>
-
-          <Show when={installProgress()}>
-            {(progress) => (
-              <div class="rounded-md bg-surface-base p-4 flex flex-col gap-2">
-                <div class="flex items-center gap-2 text-14-medium text-text-strong">
-                  <Spinner class="h-4 w-4 text-icon-info-base shrink-0" />
-                  <div>Progress</div>
-                </div>
-                <div class="text-12-regular text-text-weak whitespace-pre-wrap break-words">{progress().title}</div>
-                <div class="rounded-md border border-border-weak-base bg-background-base px-3 py-2 font-mono text-12-regular whitespace-pre-wrap break-words">
-                  <For
-                    each={
-                      progress().lines.length
-                        ? progress().lines
-                        : [{ stream: "system" as const, text: "Waiting for output...", at: 0 }]
-                    }
-                  >
-                    {(line) => (
-                      <div
-                        classList={{
-                          "text-text-warning-base": line.stream === "stderr",
-                          "text-text-weak": line.stream !== "stderr",
-                        }}
-                      >
-                        {line.text}
-                      </div>
-                    )}
-                  </For>
-                </div>
-              </div>
-            )}
-          </Show>
-
-          <Show when={current()?.lastError && (current()?.transcript.length ?? 0) > 0}>
-            <div class="rounded-md bg-surface-base p-4 flex flex-col gap-2">
-              <div class="text-14-medium text-text-strong">Diagnostics</div>
-              <div class="rounded-md border border-border-weak-base bg-background-base px-3 py-2 font-mono text-12-regular text-text-weak whitespace-pre-wrap break-words">
-                <For each={current()?.transcript ?? []}>{(line) => <div>{line.text}</div>}</For>
-              </div>
-            </div>
-          </Show>
 
           <Show when={activeStep() === "opencode" && allReady() && store.selectedDistro}>
             <div class="flex items-center justify-end gap-2">

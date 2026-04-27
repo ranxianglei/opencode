@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
+/** @ts-expect-error */
+import * as pty from "@lydell/node-pty"
 import type { WslDistroProbe, WslInstalledDistro, WslOnlineDistro, WslRuntimeCheck } from "../preload/types"
-import { runInteractiveCommand } from "./wsl-pty"
 
 export type WslCommandLine = {
   stream: "stdout" | "stderr"
@@ -17,7 +18,6 @@ export type WslCommandResult = {
 }
 
 export type RunWslOptions = {
-  onLine?: (line: WslCommandLine) => void
   signal?: AbortSignal
   /**
    * Ceiling on how long we wait for the child process to exit. When the
@@ -82,48 +82,16 @@ function runCommand(command: string, args: string[], opts: RunWslOptions = {}) {
 
     let stdout = ""
     let stderr = ""
-    let stdoutPending = ""
-    let stderrPending = ""
     const stdoutDecoder = createOutputDecoder()
     const stderrDecoder = createOutputDecoder()
-
-    const flush = (stream: WslCommandLine["stream"], pending: string) => {
-      if (!pending) return ""
-      opts.onLine?.({ stream, text: pending })
-      return ""
-    }
-
-    const splitOutput = (pending: string) => {
-      const lines: string[] = []
-      let start = 0
-      for (let i = 0; i < pending.length; i++) {
-        const char = pending[i]
-        if (char !== "\r" && char !== "\n") continue
-        lines.push(pending.slice(start, i))
-        if (char === "\r" && pending[i + 1] === "\n") i += 1
-        start = i + 1
-      }
-      return {
-        lines,
-        pending: pending.slice(start),
-      }
-    }
 
     const append = (stream: WslCommandLine["stream"], chunk: string) => {
       if (!chunk) return
       if (stream === "stdout") {
         stdout += chunk
-        stdoutPending += chunk
-        const next = splitOutput(stdoutPending)
-        stdoutPending = next.pending
-        for (const line of next.lines) opts.onLine?.({ stream: "stdout", text: line })
         return
       }
       stderr += chunk
-      stderrPending += chunk
-      const next = splitOutput(stderrPending)
-      stderrPending = next.pending
-      for (const line of next.lines) opts.onLine?.({ stream: "stderr", text: line })
     }
 
     child.stdout.on("data", (chunk: Buffer) => {
@@ -131,7 +99,6 @@ function runCommand(command: string, args: string[], opts: RunWslOptions = {}) {
     })
     child.stdout.on("end", () => {
       append("stdout", stdoutDecoder.flush())
-      stdoutPending = flush("stdout", stdoutPending)
     })
 
     child.stderr.on("data", (chunk: Buffer) => {
@@ -139,7 +106,6 @@ function runCommand(command: string, args: string[], opts: RunWslOptions = {}) {
     })
     child.stderr.on("end", () => {
       append("stderr", stderrDecoder.flush())
-      stderrPending = flush("stderr", stderrPending)
     })
 
     child.once("error", (error) => {
@@ -149,6 +115,68 @@ function runCommand(command: string, args: string[], opts: RunWslOptions = {}) {
     child.once("close", (code, signal) => {
       clearTimeout(timeoutId)
       resolve({ code, signal, stdout, stderr })
+    })
+  })
+}
+
+function runInteractiveCommand(command: string, args: string[], opts: RunWslOptions = {}, defaultTimeoutMs: number) {
+  return new Promise<WslCommandResult>((resolve, reject) => {
+    const child = pty.spawn(command, args, {
+      name: "xterm-color",
+      cols: 80,
+      rows: 24,
+      cwd: process.cwd(),
+      env: process.env,
+      useConpty: true,
+    })
+
+    let settled = false
+    let stdout = ""
+
+    const cleanup = () => {
+      clearTimeout(timeoutId)
+      abortCleanup?.()
+    }
+
+    const timeoutMs = opts.timeoutMs ?? defaultTimeoutMs
+    const timeoutId = setTimeout(() => {
+      try {
+        child.kill()
+      } catch {
+        /* ignore */
+      }
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(new Error(`${command} ${args.join(" ")} timed out after ${timeoutMs}ms`))
+    }, timeoutMs)
+
+    const abortHandler = () => {
+      try {
+        child.kill()
+      } catch {
+        /* ignore */
+      }
+      if (settled) return
+      settled = true
+      cleanup()
+      reject(new DOMException("Aborted", "AbortError"))
+    }
+    const abortCleanup = opts.signal
+      ? (() => {
+          opts.signal?.addEventListener("abort", abortHandler, { once: true })
+          return () => opts.signal?.removeEventListener("abort", abortHandler)
+        })()
+      : undefined
+
+    child.onData((data: string) => {
+      stdout += data
+    })
+    child.onExit((event: { exitCode: number }) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve({ code: event.exitCode, signal: null, stdout, stderr: "" })
     })
   })
 }
@@ -211,10 +239,6 @@ export async function readWslDistrosFromRegistry(opts?: RunWslOptions): Promise<
   )
   const stdout = result.stdout
   if (result.code !== 0 || !stdout) {
-    ;(opts?.onLine ?? (() => undefined))({
-      stream: "stderr",
-      text: `reg query failed code=${result.code} stderr=${result.stderr.slice(0, 200)}`,
-    })
     return []
   }
   const blocks = stdout.split(/\r?\n\r?\n/)

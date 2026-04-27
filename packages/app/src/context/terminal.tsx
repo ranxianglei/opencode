@@ -88,8 +88,8 @@ export function migrateTerminalState(value: unknown) {
   }
 }
 
-export function getWorkspaceTerminalCacheKey(dir: string, serverKey: string) {
-  return `${dir}:${serverKey}:${WORKSPACE_KEY}`
+export function getWorkspaceTerminalCacheKey(dir: string) {
+  return `${dir}:${WORKSPACE_KEY}`
 }
 
 export function getLegacyTerminalStorageKeys(dir: string, legacySessionID?: string) {
@@ -430,15 +430,9 @@ export const { use: useTerminal, provider: TerminalProvider } = createSimpleCont
     onCleanup(() => caches.delete(cache))
 
     const disposeAll = () => {
-      // Snapshot disposers, then defer them to a macrotask. When this runs
-      // from onCleanup during a parent remount (e.g. switching servers),
-      // calling dispose() synchronously starts a nested cleanNode cascade on
-      // a sibling root while the outer cascade is mid-traversal, corrupting
-      // solid-js's graph walk state and throwing `Cannot read properties of
-      // null (reading '1')` at chunk-*.js:992.
       const pending = Array.from(cache.values(), (entry) => entry.dispose)
       cache.clear()
-      if (pending.length) setTimeout(() => pending.forEach((d) => d()), 0)
+      for (const dispose of pending) dispose()
     }
 
     onCleanup(disposeAll)
@@ -454,10 +448,7 @@ export const { use: useTerminal, provider: TerminalProvider } = createSimpleCont
     }
 
     const loadWorkspace = (dir: string, serverKey: string, legacySessionID?: string) => {
-      // Session ids, PTY ids, and terminal buffers are server-scoped. Project
-      // swaps remount this subtree, but server swaps do not, so the in-memory
-      // cache must be partitioned by server as well as directory.
-      const key = getWorkspaceTerminalCacheKey(dir, serverKey)
+      const key = getWorkspaceTerminalCacheKey(dir)
       const existing = cache.get(key)
       if (existing) {
         debugTerminal("workspace.cache.hit", {
@@ -488,39 +479,9 @@ export const { use: useTerminal, provider: TerminalProvider } = createSimpleCont
       return entry.value
     }
 
-    const unsupported = createMemo(() => {
-      const current = server.current
-      return current?.type === "sidecar" && current.variant === "wsl" && params.dir?.startsWith("/mnt/")
-    })
-
-    const unsupportedWorkspace = {
-      ready: () => true,
-      all: () => [] as LocalPTY[],
-      active: () => undefined as string | undefined,
-      clear() {},
-      new() {},
-      update(_pty: Partial<LocalPTY> & { id: string }) {},
-      trim(_id: string) {},
-      trimAll() {},
-      clone: async (_id: string) => {},
-      bind() {
-        return {
-          trim(_id: string) {},
-          update(_pty: Partial<LocalPTY> & { id: string }) {},
-          clone: async (_id: string) => {},
-        }
-      },
-      open(_id: string) {},
-      close: async (_id: string) => {},
-      move(_id: string, _to: number) {},
-      next() {},
-      previous() {},
-    } as unknown as ReturnType<typeof createWorkspaceTerminalSession>
-
     const workspace = createMemo(() => {
-      if (unsupported()) return unsupportedWorkspace
       const key = server.key
-      if (!key) return unsupportedWorkspace
+      if (!key) return loadWorkspace(params.dir!, "", params.id)
       return loadWorkspace(params.dir!, key, params.id)
     })
 

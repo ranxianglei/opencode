@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, mock, test } from "bun:test"
 
-let getWorkspaceTerminalCacheKey: (dir: string, serverKey: string) => string
+let getWorkspaceTerminalCacheKey: (dir: string) => string
 let getLegacyTerminalStorageKeys: (dir: string, legacySessionID?: string) => string[]
 let migrateTerminalState: (value: unknown) => unknown
 
@@ -22,9 +22,8 @@ beforeAll(async () => {
 })
 
 describe("getWorkspaceTerminalCacheKey", () => {
-  test("includes the server in the workspace cache key", () => {
-    expect(getWorkspaceTerminalCacheKey("/repo", "local:windows")).toBe("/repo:local:windows:__workspace__")
-    expect(getWorkspaceTerminalCacheKey("/repo", "wsl:Debian")).toBe("/repo:wsl:Debian:__workspace__")
+  test("uses the workspace cache key", () => {
+    expect(getWorkspaceTerminalCacheKey("/repo")).toBe("/repo:__workspace__")
   })
 })
 

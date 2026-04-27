@@ -14,8 +14,7 @@ import { useLanguage } from "@/context/language"
 import { useSDK } from "@/context/sdk"
 import { ServerConnection, useServer } from "@/context/server"
 import { useSync } from "@/context/sync"
-import { isPlaceholderServerUrl, useCheckServerHealth, type ServerHealth } from "@/utils/server-health"
-import { withServerSwitchOverlay } from "@/utils/server-switch"
+import { useCheckServerHealth, type ServerHealth } from "@/utils/server-health"
 
 const pollMs = 10_000
 
@@ -243,7 +242,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
               <For each={sortedServers()}>
                 {(s) => {
                   const key = ServerConnection.key(s)
-                  const blocked = () => isPlaceholderServerUrl(s.http.url) || health[key]?.healthy === false
+                  const blocked = () => health[key]?.healthy === false
                   return (
                     <button
                       type="button"
@@ -255,21 +254,19 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
                        aria-disabled={blocked()}
                        onClick={() => {
                          if (blocked()) return
-                         void withServerSwitchOverlay(() =>
-                           startTransition(() => {
-                             batch(() => {
-                               if (server.key !== key) {
-                                 if (typeof window !== "undefined" && window.history?.replaceState) {
-                                   window.history.replaceState(null, "", "/")
-                                 }
-                               } else {
-                                 navigate("/")
+                         startTransition(() => {
+                           batch(() => {
+                             if (server.key !== key) {
+                               if (typeof window !== "undefined" && window.history?.replaceState) {
+                                 window.history.replaceState(null, "", "/")
                                }
-                               server.setActive(key)
-                             })
-                           }),
-                         )
-                       }}
+                             } else {
+                               navigate("/")
+                             }
+                             server.setActive(key)
+                           })
+                         })
+                        }}
                      >
                       <ServerHealthIndicator health={health[key]} />
                       <ServerRow

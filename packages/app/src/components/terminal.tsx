@@ -62,6 +62,26 @@ const DEFAULT_TERMINAL_COLORS: Record<"light" | "dark", TerminalColors> = {
   },
 }
 
+const getTerminalColors = (theme: ReturnType<typeof useTheme>): TerminalColors => {
+  const mode = theme.mode() === "dark" ? "dark" : "light"
+  const fallback = DEFAULT_TERMINAL_COLORS[mode]
+  const currentTheme = theme.themes()[theme.themeId()]
+  if (!currentTheme) return fallback
+  const variant = mode === "dark" ? currentTheme.dark : currentTheme.light
+  if (!variant?.seeds && !variant?.palette) return fallback
+  const resolved = resolveThemeVariant(variant, mode === "dark")
+  const text = resolved["text-stronger"] ?? fallback.foreground
+  const background = resolved["background-stronger"] ?? fallback.background
+  const alpha = mode === "dark" ? 0.25 : 0.2
+  const base = text.startsWith("#") ? (text as HexColor) : (fallback.foreground as HexColor)
+  return {
+    background,
+    foreground: text,
+    cursor: text,
+    selectionBackground: withAlpha(base, alpha),
+  }
+}
+
 const debugTerminal = (...values: unknown[]) => {
   if (!import.meta.env.DEV) return
   console.debug("[terminal]", ...values)
@@ -238,28 +258,7 @@ export const Terminal = (props: TerminalProps) => {
       })
   }
 
-  const getTerminalColors = (): TerminalColors => {
-    const mode = theme.mode() === "dark" ? "dark" : "light"
-    const fallback = DEFAULT_TERMINAL_COLORS[mode]
-    const currentTheme = theme.themes()[theme.themeId()]
-    if (!currentTheme) return fallback
-    const variant = mode === "dark" ? currentTheme.dark : currentTheme.light
-    if (!variant?.seeds && !variant?.palette) return fallback
-    const resolved = resolveThemeVariant(variant, mode === "dark")
-    const text = resolved["text-stronger"] ?? fallback.foreground
-    const background = resolved["background-stronger"] ?? fallback.background
-    const alpha = mode === "dark" ? 0.25 : 0.2
-    const base = text.startsWith("#") ? (text as HexColor) : (fallback.foreground as HexColor)
-    const selectionBackground = withAlpha(base, alpha)
-    return {
-      background,
-      foreground: text,
-      cursor: text,
-      selectionBackground,
-    }
-  }
-
-  const terminalColors = createMemo(getTerminalColors)
+  const terminalColors = createMemo(() => getTerminalColors(theme))
 
   const scheduleFit = () => {
     if (disposed) return
@@ -641,29 +640,6 @@ export const Terminal = (props: TerminalProps) => {
         socket.addEventListener("message", handleMessage)
         socket.addEventListener("error", handleError)
         socket.addEventListener("close", handleClose)
-      }
-
-      // If we're reconnecting to a saved pty AND we have a serialised buffer
-      // to replay, verify the pty still exists on the current sidecar BEFORE
-      // upgrading the WebSocket. Hono's upgradeWebSocket handler throws
-      // "Session not found" inside `onOpen` (packages/opencode/src/server/
-      // routes/instance/pty.ts:196-205), which means the client still gets a
-      // brief `open` event before the server closes the socket — enough to
-      // fire handleOpen and paint the stale buffer. Pre-checking turns this
-      // into a single pty.get() round-trip that routes directly into the
-      // clone path on NotFound, so restore never runs against a dead pty.
-      if (restore) {
-        logTerminal("restore.inspect", {
-          id,
-          serverKey: server.key ?? null,
-          directory,
-          restoreLength: restore.length,
-        })
-        if (await gone()) {
-          if (!disposed) fail(new Error("Session not found"))
-          return
-        }
-        if (disposed) return
       }
 
       open()

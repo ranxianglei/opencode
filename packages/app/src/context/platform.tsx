@@ -44,12 +44,6 @@ export type WslOpencodeCheck = {
   matchesDesktop: boolean | null
   error: string | null
 }
-export type WslTranscriptLine = {
-  stream: "stdout" | "stderr" | "system"
-  text: string
-  at: number
-}
-
 export type WslServerAcknowledgements = {
   root: boolean
   mismatch: { path: string; version: string } | null
@@ -90,8 +84,6 @@ export type WslServersState = {
   pendingRestart: boolean
   servers: WslServerItem[]
   job: WslJob | null
-  transcript: WslTranscriptLine[]
-  lastError: string | null
 }
 export type WslServersEvent = { type: "state"; state: WslServersState }
 

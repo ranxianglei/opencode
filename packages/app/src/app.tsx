@@ -31,7 +31,6 @@ import {
   Suspense,
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
-import { serverSwitching, withServerSwitchOverlay } from "@/utils/server-switch"
 import { CommandProvider } from "@/context/command"
 import { CommentsProvider } from "@/context/comments"
 import { FileProvider } from "@/context/file"
@@ -52,7 +51,7 @@ import { WslServersProvider } from "@/context/wsl-servers"
 import DirectoryLayout from "@/pages/directory-layout"
 import Layout from "@/pages/layout"
 import { ErrorPage } from "./pages/error"
-import { isPlaceholderServerUrl, useCheckServerHealth } from "./utils/server-health"
+import { useCheckServerHealth } from "./utils/server-health"
 
 const HomeRoute = lazy(() => import("@/pages/home"))
 const loadSession = () => import("@/pages/session")
@@ -198,8 +197,6 @@ function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean }>) {
         : Effect.gen(function* () {
             if (!server.current) return true
             const { http, type } = server.current
-            if (isPlaceholderServerUrl(http.url)) return false
-
             while (true) {
               const res = yield* Effect.promise(() => checkServerHealth(http))
               if (res.healthy) return true
@@ -233,14 +230,12 @@ function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean }>) {
                   if (checkMode() === "background") void healthCheckActions.refetch()
                 }}
                 onServerSelected={(key) => {
-                  void withServerSwitchOverlay(() =>
-                    startTransition(() => {
-                      batch(() => {
-                        setCheckMode("blocking")
-                        server.setActive(key)
-                      })
-                    }),
-                  )
+                  startTransition(() => {
+                    batch(() => {
+                      setCheckMode("blocking")
+                      server.setActive(key)
+                    })
+                  })
                 }}
               />
             }
@@ -362,11 +357,6 @@ export function AppInterface(props: {
       servers={props.servers}
     >
       <ConnectionGate disableHealthCheck={props.disableHealthCheck}>
-        <Show when={serverSwitching()}>
-          <div class="fixed inset-0 z-[2147483647] bg-background-base flex flex-col items-center justify-center pointer-events-auto">
-            <Splash class="w-16 h-20 opacity-50 animate-pulse" />
-          </div>
-        </Show>
         <ServerKey>
           <QueryProvider>
             <GlobalSDKProvider>

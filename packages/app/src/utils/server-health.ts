@@ -20,14 +20,6 @@ const healthCache = new Map<
   { at: number; done: boolean; fetch: typeof globalThis.fetch; promise: Promise<ServerHealth> }
 >()
 
-export function isPlaceholderServerUrl(url: string) {
-  try {
-    return new URL(url).hostname.endsWith(".invalid")
-  } catch {
-    return false
-  }
-}
-
 function cacheKey(server: ServerConnection.HttpBase) {
   return `${server.url}\n${server.username ?? ""}\n${server.password ?? ""}`
 }
@@ -93,7 +85,6 @@ export async function checkServerHealth(
   fetch: typeof globalThis.fetch,
   opts?: CheckServerHealthOptions,
 ): Promise<ServerHealth> {
-  if (isPlaceholderServerUrl(server.url)) return { healthy: false }
   const timeout = opts?.signal ? undefined : timeoutSignal(opts?.timeoutMs ?? defaultTimeoutMs)
   const signal = opts?.signal ?? timeout?.signal
   const retryCount = opts?.retryCount ?? defaultRetryCount

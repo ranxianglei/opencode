@@ -17,11 +17,9 @@ import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
 import { normalizeServerUrl, ServerConnection, useServer } from "@/context/server"
 import { useWslServers } from "@/context/wsl-servers"
-import { isPlaceholderServerUrl, type ServerHealth, useCheckServerHealth } from "@/utils/server-health"
-import { withServerSwitchOverlay } from "@/utils/server-switch"
+import { type ServerHealth, useCheckServerHealth } from "@/utils/server-health"
 
 const DEFAULT_USERNAME = "opencode"
-const cachedServerStatus = new Map<ServerConnection.Key, ServerHealth>()
 
 function versionOlderThan(current: string | null | undefined, expected: string | null | undefined) {
   if (!current || !expected) return false
@@ -168,7 +166,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     },
     addWsl: {
       showWizard: props.initialView === "add-wsl",
-      pendingSelectKey: undefined as ServerConnection.Key | undefined,
     },
     editServer: {
       id: undefined as string | undefined,
@@ -322,8 +319,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
       )
       .join("\n\n"),
   )
-  const health = (key: ServerConnection.Key) => store.status[key] ?? cachedServerStatus.get(key)
-  const isSelectable = (conn: ServerConnection.Any) => !isPlaceholderServerUrl(conn.http.url)
+  const health = (key: ServerConnection.Key) => store.status[key]
   const wslRuntime = (conn: ServerConnection.Any) => {
     if (!isWslSidecar(conn)) return
     return wslState()?.servers.find((item) => item.config.id === ServerConnection.key(conn))?.runtime
@@ -361,9 +357,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
       }),
     )
     if (disposed) return
-    for (const [key, value] of Object.entries(results)) {
-      cachedServerStatus.set(ServerConnection.Key.make(key), value)
-    }
     setStore("status", reconcile(results))
   }
 
@@ -380,7 +373,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   }
 
   async function select(conn: ServerConnection.Any, persist?: boolean) {
-    if (!isSelectable(conn)) return
     if (!persist && health(ServerConnection.key(conn))?.healthy === false) return
     const nextKey = ServerConnection.key(conn)
     const changed = server.key !== nextKey
@@ -413,17 +405,8 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
       return
     }
 
-    await withServerSwitchOverlay(apply)
+    apply()
   }
-
-  createEffect(() => {
-    const key = store.addWsl.pendingSelectKey
-    if (!key) return
-    const conn = items().find((item) => ServerConnection.key(item) === key)
-    if (!conn || !isSelectable(conn)) return
-    setStore("addWsl", "pendingSelectKey", undefined)
-    void select(conn)
-  })
 
   const handleAddChange = (value: string) => {
     if (addMutation.isPending) return
@@ -480,7 +463,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   const resetForm = () => {
     resetAdd()
     resetEdit()
-    setStore("addWsl", "pendingSelectKey", undefined)
     setStore("addWsl", "showWizard", false)
   }
 
@@ -513,19 +495,14 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   const startAddWsl = () => {
     resetAdd()
     resetEdit()
-    setStore("addWsl", "pendingSelectKey", undefined)
     setStore("addWsl", "showWizard", true)
   }
 
   const handleAddedWsl = async (distro: string) => {
     const key = ServerConnection.Key.make(`wsl:${distro}`)
     setStore("addWsl", "showWizard", false)
-    setStore("addWsl", "pendingSelectKey", key)
     const conn = items().find((item) => ServerConnection.key(item) === key)
-    if (conn && isSelectable(conn)) {
-      await select(conn)
-      setStore("addWsl", "pendingSelectKey", undefined)
-    }
+    if (conn) await select(conn)
   }
 
   const submitForm = () => {
@@ -593,7 +570,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   return (
     <Dialog
       title={formTitle()}
-      dismissOutside={!isAddWslMode()}
       fit={isAddWslMode()}
       class={isAddWslMode() ? "[&_[data-slot=dialog-body]]:flex-none [&_[data-slot=dialog-body]]:overflow-visible" : undefined}
     >
@@ -644,7 +620,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
               const key = ServerConnection.key(i)
               const wsl = isWslSidecar(i)
               const wslDistro = wsl ? i.distro : undefined
-              const blocked = () => !isSelectable(i) || health(key)?.healthy === false
+              const blocked = () => health(key)?.healthy === false
               const canChangeDefault = () => canDefault() && i.type !== "ssh"
               const canRemove = () => i.type === "http" || wsl
               const hasMenuActionsBeforeDelete = () => canRemove() && (i.type === "http" || canChangeDefault() || canRetryWsl(i))

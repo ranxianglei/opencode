@@ -12,9 +12,6 @@ export interface DialogProps extends ParentProps {
   classList?: ComponentProps<"div">["classList"]
   fit?: boolean
   transition?: boolean
-  // When `false`, clicking the overlay or outside the dialog will not dismiss it.
-  // Default is `true`.
-  dismissOutside?: boolean
 }
 
 export function Dialog(props: DialogProps) {
@@ -41,9 +38,6 @@ export function Dialog(props: DialogProps) {
               e.preventDefault()
               autofocusEl.focus()
             }
-          }}
-          onInteractOutside={(e) => {
-            if (props.dismissOutside === false) e.preventDefault()
           }}
         >
           <Show when={props.title || props.action}>

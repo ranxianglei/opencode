@@ -47,12 +47,6 @@ export type WslOpencodeCheck = {
   matchesDesktop: boolean | null
   error: string | null
 }
-export type WslTranscriptLine = {
-  stream: "stdout" | "stderr" | "system"
-  text: string
-  at: number
-}
-
 export type WslServerAcknowledgements = {
   root: boolean
   mismatch: { path: string; version: string } | null
@@ -93,8 +87,6 @@ export type WslServersState = {
   pendingRestart: boolean
   servers: WslServerItem[]
   job: WslJob | null
-  transcript: WslTranscriptLine[]
-  lastError: string | null
 }
 export type WslServersEvent = { type: "state"; state: WslServersState }
 
@@ -127,18 +119,6 @@ export type WindowConfig = {
 }
 
 export type ElectronAPI = {
-  httpFetch: (input: {
-    url: string
-    method: string
-    headers: Record<string, string>
-    body?: string
-    timeoutMs?: number
-  }) => Promise<{
-    status: number
-    statusText: string
-    headers: Record<string, string>
-    body: string
-  }>
   killSidecar: () => Promise<void>
   installCli: () => Promise<string>
   awaitInitialization: (onStep: (step: InitStep) => void) => Promise<ServerReadyData>

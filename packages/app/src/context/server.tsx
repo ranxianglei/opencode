@@ -2,7 +2,7 @@ import { createSimpleContext } from "@opencode-ai/ui/context"
 import { type Accessor, batch, createEffect, createMemo, onCleanup, untrack } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"
-import { isPlaceholderServerUrl, useCheckServerHealth } from "@/utils/server-health"
+import { useCheckServerHealth } from "@/utils/server-health"
 
 type StoredProject = { worktree: string; expanded: boolean }
 type StoredServer = string | ServerConnection.HttpBase | ServerConnection.Http
@@ -250,10 +250,6 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
 
       if (props.disableHealthCheck) {
         setState("healthy", true)
-        return
-      }
-      if (isPlaceholderServerUrl(current_.http.url)) {
-        setState("healthy", false)
         return
       }
       setState("healthy", undefined)

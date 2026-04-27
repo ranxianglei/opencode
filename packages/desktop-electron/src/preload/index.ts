@@ -2,7 +2,6 @@ import { contextBridge, ipcRenderer } from "electron"
 import type { ElectronAPI, InitStep, SqliteMigrationProgress, WslServersEvent } from "./types"
 
 const api: ElectronAPI = {
-  httpFetch: (input) => ipcRenderer.invoke("http-fetch", input),
   killSidecar: () => ipcRenderer.invoke("kill-sidecar"),
   installCli: () => ipcRenderer.invoke("install-cli"),
   awaitInitialization: (onStep) => {
