@@ -16,7 +16,6 @@ export {
   type WslServersEvent,
   type WslServersPlatform,
   type WslServersState,
-  type WslServerStep,
 } from "./context/platform"
 export { ServerConnection } from "./context/server"
 export { handleNotificationClick } from "./utils/notification-click"

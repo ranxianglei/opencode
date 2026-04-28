@@ -14,7 +14,6 @@ import { createStore, produce, reconcile } from "solid-js/store"
 import { useLanguage } from "@/context/language"
 import type { InitError } from "../pages/error"
 import { useGlobalSDK } from "./global-sdk"
-import { useServer } from "./server"
 import { bootstrapDirectory, bootstrapGlobal, clearProviderRev } from "./global-sync/bootstrap"
 import { createChildStoreManager } from "./global-sync/child-store"
 import { applyDirectoryEvent, applyGlobalEvent, cleanupDroppedSessionCaches } from "./global-sync/event-reducer"
@@ -41,12 +40,11 @@ type GlobalStore = {
   reload: undefined | "pending" | "complete"
 }
 
-export const loadSessionsQuery = (directory: string, serverKey: string | undefined) =>
-  queryOptions<null>({ queryKey: [serverKey, directory, "loadSessions"], queryFn: skipToken })
+export const loadSessionsQuery = (directory: string) =>
+  queryOptions<null>({ queryKey: [directory, "loadSessions"], queryFn: skipToken })
 
 function createGlobalSync() {
   const globalSDK = useGlobalSDK()
-  const server = useServer()
   const language = useLanguage()
   const owner = getOwner()
   if (!owner) throw new Error("GlobalSync must be created within owner")
@@ -171,7 +169,7 @@ function createGlobalSync() {
     const limit = Math.max(store.limit + SESSION_RECENT_LIMIT, SESSION_RECENT_LIMIT)
     const promise = queryClient
       .fetchQuery({
-        ...loadSessionsQuery(directory, server.key),
+        ...loadSessionsQuery(directory),
         queryFn: () =>
           loadRootSessionsWithFallback({
             directory,
@@ -237,7 +235,6 @@ function createGlobalSync() {
       const sdk = sdkFor(directory)
       await bootstrapDirectory({
         directory,
-        serverKey: server.key,
         global: {
           config: globalStore.config,
           path: globalStore.path,
@@ -337,7 +334,6 @@ function createGlobalSync() {
     try {
       await bootstrapGlobal({
         globalSDK: globalSDK.client,
-        serverKey: server.key,
         requestFailedTitle: language.t("common.requestFailed"),
         translate: language.t,
         formatMoreCount: (count) => language.t("common.moreCountSuffix", { count }),

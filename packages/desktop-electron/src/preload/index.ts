@@ -33,8 +33,6 @@ const api: ElectronAPI = {
     addServer: (distro) => ipcRenderer.invoke("wsl-servers-add", distro),
     removeServer: (id) => ipcRenderer.invoke("wsl-servers-remove", id),
     startServer: (id) => ipcRenderer.invoke("wsl-servers-start", id),
-    stopServer: (id) => ipcRenderer.invoke("wsl-servers-stop", id),
-    cancelJob: () => ipcRenderer.invoke("wsl-servers-cancel"),
   },
   getWindowConfig: () => ipcRenderer.invoke("get-window-config"),
   consumeInitialDeepLinks: () => ipcRenderer.invoke("consume-initial-deep-links"),

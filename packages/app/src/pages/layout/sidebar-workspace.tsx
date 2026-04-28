@@ -16,7 +16,6 @@ import { type Session } from "@opencode-ai/sdk/v2/client"
 import { type LocalProject } from "@/context/layout"
 import { loadSessionsQuery, useGlobalSync } from "@/context/global-sync"
 import { useLanguage } from "@/context/language"
-import { useServer } from "@/context/server"
 import { NewSessionItem, SessionItem, SessionSkeleton } from "./sidebar-items"
 import { sortedRootSessions, workspaceKey } from "./helpers"
 import { useQuery } from "@tanstack/solid-query"
@@ -320,19 +319,12 @@ export const SortableWorkspace = (props: {
   })
   const slug = createMemo(() => base64Encode(props.directory))
   const sessions = createMemo(() => sortedRootSessions(workspaceStore, props.sortNow()))
-  // Guard against `props.project` being transiently undefined during a
-  // server-switch cascade. The parent renders
-  //   <For each={workspaces()}>{(dir) => <SortableWorkspace project={project()!} ... />}</For>
-  // where `project()` can flip to undefined while the enclosing <Show when={project()}>
-  // gate hasn't yet unmounted this child. Bootstrap's setStore can then fire
-  // these memos with stale props.
-  const local = createMemo(() => props.directory === (props.project?.worktree ?? ""))
+  const local = createMemo(() => props.directory === props.project.worktree)
   const active = createMemo(() => workspaceKey(props.ctx.currentDir()) === workspaceKey(props.directory))
-  const server = useServer()
   const workspaceValue = createMemo(() => {
     const branch = workspaceStore.vcs?.branch
     const name = branch ?? getFilename(props.directory)
-    const projectId = props.project?.id
+    const projectId = props.project.id
     if (!projectId) return name
     return props.ctx.workspaceName(props.directory, projectId, branch) ?? name
   })
@@ -340,7 +332,7 @@ export const SortableWorkspace = (props: {
   const boot = createMemo(() => open() || active())
   const count = createMemo(() => sessions()?.length ?? 0)
   const hasMore = createMemo(() => workspaceStore.sessionTotal > count())
-  const query = useQuery(() => ({ ...loadSessionsQuery(props.project.worktree, server.key) }))
+  const query = useQuery(() => ({ ...loadSessionsQuery(props.project.worktree) }))
   const busy = createMemo(() => props.ctx.isBusy(props.directory))
   const loading = () => query.isLoading && count() === 0
   const touch = createMediaQuery("(hover: none)")
@@ -364,7 +356,7 @@ export const SortableWorkspace = (props: {
       InlineEditor={props.ctx.InlineEditor}
       renameWorkspace={props.ctx.renameWorkspace}
       setEditor={props.ctx.setEditor}
-      projectId={props.project?.id ?? ""}
+      projectId={props.project.id ?? ""}
     />
   )
 
@@ -433,7 +425,7 @@ export const SortableWorkspace = (props: {
                 openEditor={props.ctx.openEditor}
                 showResetWorkspaceDialog={props.ctx.showResetWorkspaceDialog}
                 showDeleteWorkspaceDialog={props.ctx.showDeleteWorkspaceDialog}
-                root={props.project?.worktree ?? props.directory}
+                root={props.project.worktree}
                 clearHoverProjectSoon={props.ctx.clearHoverProjectSoon}
                 navigateToNewSession={() => navigate(`/${slug()}/session`)}
               />
@@ -467,33 +459,20 @@ export const LocalWorkspace = (props: {
 }): JSX.Element => {
   const globalSync = useGlobalSync()
   const language = useLanguage()
-  const server = useServer()
-  // Same guard pattern as SortableWorkspace: the parent passes
-  // `project={project()!}` but `project()` can transiently flip to
-  // undefined during a server-switch cascade before this component
-  // unmounts, so every reactive memo reading props.project has to
-  // tolerate undefined.
-  const worktree = createMemo(() => props.project?.worktree ?? "")
+  const worktree = createMemo(() => props.project.worktree)
   const workspace = createMemo(() => {
-    const dir = worktree()
-    if (!dir) return undefined
-    const [store, setStore] = globalSync.child(dir)
+    const [store, setStore] = globalSync.child(worktree())
     return { store, setStore }
   })
-  const slug = createMemo(() => (worktree() ? base64Encode(worktree()) : ""))
-  const sessions = createMemo(() => {
-    const store = workspace()?.store
-    return store ? sortedRootSessions(store, props.sortNow()) : []
-  })
-  const booted = createMemo((prev) => prev || workspace()?.store.status === "complete", false)
+  const slug = createMemo(() => base64Encode(worktree()))
+  const sessions = createMemo(() => sortedRootSessions(workspace().store, props.sortNow()))
   const count = createMemo(() => sessions()?.length ?? 0)
-  const query = useQuery(() => ({ ...loadSessionsQuery(worktree(), server.key) }))
+  const query = useQuery(() => ({ ...loadSessionsQuery(worktree()) }))
   const loading = createMemo(() => query.isPending && count() === 0)
-  const hasMore = createMemo(() => (workspace()?.store.sessionTotal ?? 0) > count())
+  const hasMore = createMemo(() => workspace().store.sessionTotal > count())
   const loadMore = async () => {
     const dir = worktree()
-    if (!dir) return
-    workspace()?.setStore("limit", (limit) => (limit ?? 0) + 5)
+    workspace().setStore("limit", (limit) => (limit ?? 0) + 5)
     await globalSync.project.loadSessions(dir)
   }
 

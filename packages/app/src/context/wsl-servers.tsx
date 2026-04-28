@@ -4,23 +4,22 @@ import { createEffect, onCleanup } from "solid-js"
 import type { WslServersPlatform, WslServersState } from "./platform"
 import { usePlatform } from "./platform"
 
-export const wslServersQueryKey = ["platform", "wslServers"] as const
-
-export function wslServersQueryOptions(api: WslServersPlatform | undefined) {
-  return queryOptions<WslServersState>({
-    queryKey: wslServersQueryKey,
-    queryFn: api ? () => api.getState() : skipToken,
-    staleTime: Number.POSITIVE_INFINITY,
-    gcTime: Number.POSITIVE_INFINITY,
-  })
-}
+const wslServersQueryKey = ["platform", "wslServers"] as const
 
 export const { use: useWslServers, provider: WslServersProvider } = createSimpleContext({
   name: "WslServers",
   init: () => {
     const platform = usePlatform()
     const queryClient = useQueryClient()
-    const query = useQuery(() => ({ ...wslServersQueryOptions(platform.wslServers) }))
+    const query = useQuery(() => {
+      const api = platform.wslServers
+      return queryOptions<WslServersState>({
+        queryKey: wslServersQueryKey,
+        queryFn: api ? () => api.getState() : skipToken,
+        staleTime: Number.POSITIVE_INFINITY,
+        gcTime: Number.POSITIVE_INFINITY,
+      })
+    })
 
     createEffect(() => {
       const api = platform.wslServers

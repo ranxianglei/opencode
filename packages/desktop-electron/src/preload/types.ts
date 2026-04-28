@@ -4,12 +4,6 @@ export type ServerReadyData = {
   url: string
   username: string | null
   password: string | null
-  local: {
-    key: string
-    url: string
-    username: string | null
-    password: string | null
-  }
 }
 
 export type SqliteMigrationProgress = { type: "InProgress"; value: number } | { type: "Done" }
@@ -17,12 +11,10 @@ export type SqliteMigrationProgress = { type: "InProgress"; value: number } | { 
 export type WslRuntimeCheck = {
   available: boolean
   version: string | null
-  status: string | null
   error: string | null
 }
 export type WslInstalledDistro = {
   name: string
-  state: string | null
   version: number | null
   isDefault: boolean
 }
@@ -35,7 +27,6 @@ export type WslDistroProbe = {
   canExecute: boolean
   hasBash: boolean
   hasCurl: boolean
-  username: string | null
   isRoot: boolean | null
   error: string | null
 }
@@ -98,8 +89,6 @@ export type WslServersAPI = {
   addServer: (distro: string) => Promise<WslServerConfig>
   removeServer: (id: string) => Promise<void>
   startServer: (id: string) => Promise<void>
-  stopServer: (id: string) => Promise<void>
-  cancelJob: () => Promise<void>
 }
 
 export type LinuxDisplayBackend = "wayland" | "auto"

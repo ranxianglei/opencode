@@ -134,13 +134,13 @@ const createPlatform = (): Platform => {
   const wslHome = async () => {
     const distro = activeWslDistro()
     if (!distro) return undefined
-    return window.api.wslPath("~", "windows", distro).catch(() => undefined)
+    return window.api.wslPath("~", "windows", distro)
   }
 
   const handleWslPicker = async <T extends string | string[] | null>(result: T): Promise<T> => {
     const distro = activeWslDistro()
     if (!result || !distro) return result
-    const convert = (path: string) => window.api.wslPath(path, "linux", distro).catch(() => path)
+    const convert = (path: string) => window.api.wslPath(path, "linux", distro)
     if (Array.isArray(result)) {
       return (await Promise.all(result.map(convert))) as T
     }
@@ -217,10 +217,7 @@ const createPlatform = (): Platform => {
         const resolvedApp = app ? await window.api.resolveAppPath(app).catch(() => null) : null
         const resolvedPath = await (async () => {
           const distro = activeWslDistro()
-          if (distro) {
-            const converted = await window.api.wslPath(path, "windows", distro).catch(() => null)
-            if (converted) return converted
-          }
+          if (distro) return window.api.wslPath(path, "windows", distro)
           return path
         })()
         return window.api.openPath(resolvedPath, resolvedApp ?? undefined)
@@ -404,9 +401,9 @@ render(() => {
           type: "sidecar",
           variant: "base",
           http: {
-            url: data.local.url,
-            username: data.local.username ?? undefined,
-            password: data.local.password ?? undefined,
+            url: data.url,
+            username: data.username ?? undefined,
+            password: data.password ?? undefined,
           },
         })
       }
@@ -434,7 +431,7 @@ render(() => {
 
     return (
       <AppInterface
-        defaultServer={defaultServer.latest ?? ServerConnection.Key.make(startup.latest?.sidecar?.local.key ?? "local:windows")}
+        defaultServer={defaultServer.latest ?? ServerConnection.Key.make("local:windows")}
         serversReady={!platform.wslServers || !wslServers.isPending}
         servers={servers()}
         router={MemoryRouter}

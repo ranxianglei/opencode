@@ -194,11 +194,11 @@ export const Terminal = (props: TerminalProps) => {
   const server = useServer()
   const directory = sdk.directory
   const client = sdk.client
+  const url = sdk.url
   const auth = server.current?.http
   const username = auth?.username ?? "opencode"
   const password = auth?.password ?? ""
-  const currentUrl = () => server.current?.http.url ?? sdk.url
-  const sameOrigin = () => new URL(currentUrl(), location.href).origin === location.origin
+  const sameOrigin = new URL(url, location.href).origin === location.origin
   let container!: HTMLDivElement
   const [local, others] = splitProps(props, ["pty", "class", "classList", "autoFocus", "onConnect", "onConnectError"])
   const id = local.pty.id
@@ -525,18 +525,11 @@ export const Terminal = (props: TerminalProps) => {
         if (disposed) return
         drop?.()
 
-        const baseUrl = currentUrl()
-        if (sdk.url !== baseUrl) {
-          console.error(
-            `[terminal panic] sdk.url mismatch id=${id} serverKey=${server.key ?? ""} directory=${directory} sdkUrl=${sdk.url} currentUrl=${baseUrl}`,
-          )
-        }
-
-        const next = new URL(baseUrl + `/pty/${id}/connect`)
+        const next = new URL(url + `/pty/${id}/connect`)
         next.searchParams.set("directory", directory)
         next.searchParams.set("cursor", String(seek))
         next.protocol = next.protocol === "https:" ? "wss:" : "ws:"
-        if (!sameOrigin() && password) {
+        if (!sameOrigin && password) {
           next.searchParams.set("auth_token", btoa(`${username}:${password}`))
           // For same-origin requests, let the browser reuse the page's existing auth.
           next.username = username
@@ -549,7 +542,7 @@ export const Terminal = (props: TerminalProps) => {
           directory,
           restoreLength: restore.length,
           sdkUrl: sdk.url,
-          currentUrl: baseUrl,
+          currentUrl: url,
           wsUrl: next.toString(),
         })
 
@@ -564,7 +557,7 @@ export const Terminal = (props: TerminalProps) => {
             id,
             serverKey: server.key ?? null,
             directory,
-            currentUrl: baseUrl,
+            currentUrl: url,
           })
           // Paint the saved buffer now that we've confirmed the pty really
           // exists on the current sidecar. Fire-and-forget: write()'s own
@@ -630,7 +623,7 @@ export const Terminal = (props: TerminalProps) => {
             directory,
             code: event.code,
             reason: event.reason || null,
-            currentUrl: baseUrl,
+            currentUrl: url,
           })
           retry(new Error(language.t("terminal.connectionLost.abnormalClose", { code: event.code })))
         }

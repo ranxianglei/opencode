@@ -5,9 +5,10 @@ import { showToast } from "@opencode-ai/ui/toast"
 import { createEffect, createMemo, For, Match, onCleanup, Show, Switch } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLanguage } from "@/context/language"
-import type { WslServerStep } from "@/context/platform"
 import { usePlatform } from "@/context/platform"
 import { useWslServers } from "@/context/wsl-servers"
+
+type WslServerStep = "wsl" | "distro" | "opencode"
 
 const STEPS: WslServerStep[] = ["wsl", "distro", "opencode"]
 

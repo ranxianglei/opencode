@@ -120,14 +120,11 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
   }
 
   const refreshDistroLists = async (opts: { signal?: AbortSignal }) => {
-    const [installedResult, onlineResult] = await Promise.allSettled([
+    const [installed, online] = await Promise.all([
       listInstalledWslDistros(opts),
       listOnlineWslDistros(opts),
     ])
-    return {
-      installed: installedResult.status === "fulfilled" ? installedResult.value : [],
-      online: onlineResult.status === "fulfilled" ? onlineResult.value : [],
-    }
+    return { installed, online }
   }
 
   const nextStartAttempt = (id: string) => {
@@ -316,12 +313,6 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
       await openWslTerminal(name)
     },
 
-    async cancelJob() {
-      jobAbort?.abort()
-      jobAbort = undefined
-      setState({ job: null })
-    },
-
     async addServer(distro: string): Promise<WslServerConfig> {
       const id = wslServerIdForDistro(distro)
       if (state.servers.some((item) => item.config.id === id)) {
@@ -348,12 +339,6 @@ export function createWslServersController(appVersion: string, spawnSidecar: Spa
     },
 
     startServer,
-
-    async stopServer(id: string) {
-      invalidateStartAttempt(id)
-      await stopServerInternal(id)
-      setRuntime(id, { kind: "stopped" })
-    },
 
     stopAll() {
       for (const item of state.servers) invalidateStartAttempt(item.config.id)

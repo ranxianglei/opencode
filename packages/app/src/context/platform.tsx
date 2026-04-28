@@ -9,17 +9,13 @@ type OpenFilePickerOptions = { title?: string; multiple?: boolean; accept?: stri
 type SaveFilePickerOptions = { title?: string; defaultPath?: string }
 type UpdateInfo = { updateAvailable: boolean; version?: string }
 
-export type WslServerStep = "wsl" | "distro" | "opencode"
-
 export type WslRuntimeCheck = {
   available: boolean
   version: string | null
-  status: string | null
   error: string | null
 }
 export type WslInstalledDistro = {
   name: string
-  state: string | null
   version: number | null
   isDefault: boolean
 }
@@ -32,7 +28,6 @@ export type WslDistroProbe = {
   canExecute: boolean
   hasBash: boolean
   hasCurl: boolean
-  username: string | null
   isRoot: boolean | null
   error: string | null
 }
@@ -95,8 +90,6 @@ export type WslServersPlatform = {
   addServer(distro: string): Promise<WslServerConfig>
   removeServer(id: string): Promise<void>
   startServer(id: string): Promise<void>
-  stopServer(id: string): Promise<void>
-  cancelJob(): Promise<void>
 }
 
 export type Platform = {

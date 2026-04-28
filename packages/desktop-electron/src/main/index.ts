@@ -181,18 +181,11 @@ async function initialize() {
   const hostname = "127.0.0.1"
   const url = `http://${hostname}:${port}`
   const password = randomUUID()
-  const key = "local:windows"
 
   const startupData: ServerReadyData = {
     url,
     username: "opencode",
     password,
-    local: {
-      key,
-      url,
-      username: "opencode",
-      password,
-    },
   }
   const loadingTask = (async () => {
     logger.log("sidecar connection started", { url })
@@ -371,8 +364,6 @@ registerIpcHandlers({
   wslServersAddServer: (distro) => wslServers.addServer(distro),
   wslServersRemoveServer: (id) => wslServers.removeServer(id),
   wslServersStartServer: (id) => wslServers.startServer(id),
-  wslServersStopServer: (id) => wslServers.stopServer(id),
-  wslServersCancelJob: () => wslServers.cancelJob(),
   getWindowConfig: () => ({ updaterEnabled: UPDATER_ENABLED }),
   consumeInitialDeepLinks: () => pendingDeepLinks.splice(0),
   getDefaultServerUrl: () => getDefaultServerUrl(),

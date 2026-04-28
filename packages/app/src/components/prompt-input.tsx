@@ -33,7 +33,6 @@ import { Persist, persisted } from "@/utils/persist"
 import { usePermission } from "@/context/permission"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
-import { useServer } from "@/context/server"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { createSessionTabs } from "@/pages/session/helpers"
 import { createTextFragment, getCursorPosition, setCursorPosition, setRangeEdge } from "./prompt-input/editor-dom"
@@ -113,7 +112,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   const dialog = useDialog()
   const providers = useProviders()
   const command = useCommand()
-  const server = useServer()
   const permission = usePermission()
   const language = useLanguage()
   const platform = usePlatform()
@@ -1256,9 +1254,9 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
   const [agentsQuery, globalProvidersQuery, providersQuery] = useQueries(() => ({
     queries: [
-      loadAgentsQuery(sdk.directory, server.key),
-      loadProvidersQuery(null, server.key),
-      loadProvidersQuery(sdk.directory, server.key),
+      loadAgentsQuery(sdk.directory),
+      loadProvidersQuery(null),
+      loadProvidersQuery(sdk.directory),
     ],
   }))
 

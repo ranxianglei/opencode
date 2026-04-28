@@ -277,16 +277,13 @@ export async function probeWslRuntime(opts?: RunWslOptions): Promise<WslRuntimeC
     return {
       available: false,
       version: null,
-      status: null,
       error: summarize(version.stderr || version.stdout) || "WSL is unavailable",
     }
   }
 
-  const status = await runWsl(["--status"], opts).catch(() => undefined)
   return {
     available: true,
     version: firstLine(version.stdout),
-    status: status?.code === 0 ? summarize(status.stdout) : null,
     error: null,
   }
 }
@@ -351,7 +348,6 @@ export async function probeWslDistro(name: string, opts?: RunWslOptions): Promis
       canExecute: false,
       hasBash: false,
       hasCurl: false,
-      username: null,
       isRoot: null,
       error: summarize(executable.stderr || executable.stdout) || "Cannot execute commands in distro",
     }
@@ -369,7 +365,6 @@ export async function probeWslDistro(name: string, opts?: RunWslOptions): Promis
     canExecute: true,
     hasBash: bash.code === 0 && summarize(bash.stdout) === "yes",
     hasCurl: curl.code === 0 && summarize(curl.stdout) === "yes",
-    username: username || null,
     isRoot: username ? username === "root" : null,
     error: null,
   }
@@ -472,14 +467,13 @@ function parseInstalledDistros(output: string) {
   return output.split(/\r?\n/g).flatMap((line) => {
     const trimmed = line.trim()
     if (!trimmed) return []
-    const match = line.match(/^\s*(\*)?\s*(.*?)\s{2,}(\S+)\s+(\d+)\s*$/)
+    const match = line.match(/^\s*(\*)?\s*(.*?)\s{2,}\S+\s+(\d+)\s*$/)
     if (!match) return []
-    const [, marker, name, state, version] = match
+    const [, marker, name, version] = match
     if (!name || /^name$/i.test(name)) return []
     return [
       {
         name: name.trim(),
-        state: state || null,
         version: Number.isNaN(Number.parseInt(version, 10)) ? null : Number.parseInt(version, 10),
         isDefault: marker === "*",
       } satisfies WslInstalledDistro,
