@@ -21,30 +21,30 @@
 - [x] [High][L] Revisit `DefaultServer` context; fold into server ownership or make it a real provider instead of ad hoc query hooks.
 - [x] [High][L] Collapse duplicated server health loops/logging across `ConnectionGate`, `ServerProvider`, dialog, and status popover.
 
-- [ ] [Medium][S] Remove `initialView?: "add-wsl"` from `DialogSelectServer` if no callsites need it.
-- [ ] [Medium][S] Remove `handleRemoveWsl`, `handleRetryWsl`, `handleUpdateWsl` guard helpers; callers already know when item is WSL.
-- [ ] [Medium][S] Remove `hasMenuActionsBeforeDelete()` from `dialog-select-server.tsx`; inline or always render the separator in the delete block.
+- [x] [Medium][S] Remove `initialView?: "add-wsl"` from `DialogSelectServer` if no callsites need it.
+- [x] [Medium][S] Remove `handleRemoveWsl`, `handleRetryWsl`, `handleUpdateWsl` guard helpers; callers already know when item is WSL.
+- [x] [Medium][S] Remove `hasMenuActionsBeforeDelete()` from `dialog-select-server.tsx`; inline or always render the separator in the delete block.
 - [x] [Medium][S] Remove UI-only `parseProgressPercent()` and percent display in WSL wizard unless progress is structured by backend.
-- [ ] [Medium][S] Remove hard-coded Ubuntu installable distro special-case from UI; backend/platform should return installable distros.
-- [ ] [Medium][S] Remove `isHiddenDistro()` UI filter for `docker-desktop`; backend/platform should decide hidden distros if needed.
+- [ ] ~~[Medium][S] Remove hard-coded Ubuntu installable distro special-case from UI; backend/platform should return installable distros.~~ (Skipped: changes distro list behavior)
+- [ ] ~~[Medium][S] Remove `isHiddenDistro()` UI filter for `docker-desktop`; backend/platform should decide hidden distros if needed.~~ (Skipped: changes visible distro behavior)
 - [x] [Medium][S] Remove `installProgress()` transcript shaping in WSL wizard; render raw transcript or structured progress.
-- [ ] [Medium][S] Remove `stepIndex` / `stepTitle` / `stepState` helpers in WSL wizard; inline the 3-step UI state.
-- [ ] [Medium][S] Remove `runWslBash()` from `wsl.ts`; it is unused.
+- [x] [Medium][S] Remove `stepIndex` / `stepTitle` / `stepState` helpers in WSL wizard; inline the 3-step UI state.
+- [x] [Medium][S] Remove `runWslBash()` from `wsl.ts`; it is unused.
 - [x] [Medium][S] Remove progress-line de-duping from either `wsl-pty.ts` or `wsl-servers.ts`; keep only one place if kept.
-- [ ] [Medium][S] Remove `ensureLoopbackNoProxy()` and Chromium proxy-bypass mutation unless a measured proxy repro exists.
-- [ ] [Medium][S] Remove broad renderer global error/rejection logging in Electron renderer unless this PR intentionally adds diagnostics.
-- [ ] [Medium][S] Remove `wireWindowDiagnostics()` or move it to a separate diagnostics PR; it is unrelated WSL feature plumbing.
-- [ ] [Medium][S] Remove terminal debug logging helpers/calls once current investigation is done.
-- [ ] [Medium][S] Remove server-health retry logging helpers (`serializeError`, `stringifyLog`, per-attempt logs`) or dev-gate one final warning.
-- [ ] [Medium][S] Remove `resolveSystem32Command()` if no PATH failure is proven; call `wsl.exe` directly.
-- [ ] [Medium][S] Remove WSL path picker catch fallbacks in Electron renderer; for active WSL, failed conversion should fail, not pass Windows paths through.
-- [ ] [Medium][M] Remove `createOutputDecoder()` / `detectOutputEncoding()` heuristic unless logs prove UTF-16 WSL output occurs.
-- [ ] [Medium][M] Remove registry parsing/default-user discovery in `wsl.ts` if not proven necessary; use the actual WSL command context consistently.
-- [ ] [Medium][M] Simplify `resolveWslOpencode()` fallback path search; prefer `command -v opencode` unless installer/PATH proves otherwise.
-- [ ] [Medium][M] Simplify WSL sidecar shell script env/path/watchman workarounds in `server.ts`; add back only with repro/logs.
-- [ ] [Medium][M] Remove `startAttempts` stale-start guard in WSL controller unless start/remove/stop race is reproduced.
-- [ ] [Medium][M] Remove `acknowledgements` model/API/IPC if UI does not consume it.
-- [ ] [Medium][M] Remove `Promise.allSettled` distro-list fallback; let listing errors surface instead of showing empty distros.
+- [ ] ~~[Medium][S] Remove `ensureLoopbackNoProxy()` and Chromium proxy-bypass mutation unless a measured proxy repro exists.~~ (Skipped: networking behavior change)
+- [ ] ~~[Medium][S] Remove broad renderer global error/rejection logging in Electron renderer unless this PR intentionally adds diagnostics.~~ (Skipped: keep diagnostics)
+- [ ] ~~[Medium][S] Remove `wireWindowDiagnostics()` or move it to a separate diagnostics PR; it is unrelated WSL feature plumbing.~~ (Skipped: keep diagnostics)
+- [ ] ~~[Medium][S] Remove terminal debug logging helpers/calls once current investigation is done.~~ (Skipped: keep diagnostics)
+- [ ] ~~[Medium][S] Remove server-health retry logging helpers (`serializeError`, `stringifyLog`, per-attempt logs`) or dev-gate one final warning.~~ (Skipped: keep diagnostics)
+- [ ] ~~[Medium][S] Remove `resolveSystem32Command()` if no PATH failure is proven; call `wsl.exe` directly.~~ (Skipped: PATH behavior change)
+- [ ] ~~[Medium][S] Remove WSL path picker catch fallbacks in Electron renderer; for active WSL, failed conversion should fail, not pass Windows paths through.~~ (Skipped: behavior change)
+- [ ] ~~[Medium][M] Remove `createOutputDecoder()` / `detectOutputEncoding()` heuristic unless logs prove UTF-16 WSL output occurs.~~ (Skipped: output compatibility change)
+- [ ] ~~[Medium][M] Remove registry parsing/default-user discovery in `wsl.ts` if not proven necessary; use the actual WSL command context consistently.~~ (Skipped: opencode discovery behavior change)
+- [ ] ~~[Medium][M] Simplify `resolveWslOpencode()` fallback path search; prefer `command -v opencode` unless installer/PATH proves otherwise.~~ (Skipped: opencode discovery behavior change)
+- [ ] ~~[Medium][M] Simplify WSL sidecar shell script env/path/watchman workarounds in `server.ts`; add back only with repro/logs.~~ (Skipped: runtime environment behavior change)
+- [ ] ~~[Medium][M] Remove `startAttempts` stale-start guard in WSL controller unless start/remove/stop race is reproduced.~~ (Skipped: race-safety behavior change)
+- [x] [Medium][M] Remove `acknowledgements` model/API/IPC if UI does not consume it.
+- [ ] ~~[Medium][M] Remove `Promise.allSettled` distro-list fallback; let listing errors surface instead of showing empty distros.~~ (Skipped: error/empty-list behavior change)
 - [ ] [Medium][M] Collapse WSL persisted config + state mutations into one owner/path, or derive runtime state instead of mutating both.
 - [ ] [Medium][M] Remove bespoke WSL subscribe/unsubscribe IPC lifecycle if broadcast event pattern is acceptable.
 - [ ] [Medium][M] Collapse repeated WSL IPC method lists in `ipc.ts`, `index.ts`, and preload into one simpler mapping or smaller API surface.

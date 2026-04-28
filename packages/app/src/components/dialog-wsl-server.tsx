@@ -244,20 +244,39 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
     }
   }
 
-  const steps = createMemo(() =>
-    STEPS.map((step) => ({
-      step,
-      title: stepTitle(step),
-      state: stepState(step, {
-        active: activeStep(),
-        wslReady: wslReady(),
-        distroReady: distroReady(),
-        opencodeReady: opencodeReady(),
-        opencodeMismatch: opencodeCheck()?.matchesDesktop === false,
-      }),
-      locked: stepIndex(step) > stepIndex(recommendedStep()),
-    })),
-  )
+  const steps = createMemo(() => {
+    const active = activeStep()
+    const activeIndex = STEPS.indexOf(active)
+    const recommendedIndex = STEPS.indexOf(recommendedStep())
+    return STEPS.map((step) => {
+      const index = STEPS.indexOf(step)
+      return {
+        step,
+        title: step === "wsl" ? "WSL" : step === "distro" ? "Choose distro" : "OpenCode",
+        state:
+          active === step
+            ? "current"
+            : step === "wsl"
+              ? wslReady()
+                ? "done"
+                : "warning"
+              : step === "distro"
+                ? distroReady()
+                  ? "done"
+                  : index > activeIndex
+                    ? "locked"
+                    : "warning"
+                : opencodeCheck()?.matchesDesktop === false
+                  ? "warning"
+                  : opencodeReady()
+                    ? "done"
+                    : index > activeIndex
+                      ? "locked"
+                      : "warning",
+        locked: index > recommendedIndex,
+      }
+    })
+  })
   const loadError = createMemo(() => {
     const error = wslServers.error
     if (!error) return "Failed to load WSL state."
@@ -553,37 +572,4 @@ function requestError(language: ReturnType<typeof useLanguage>, err: unknown) {
     title: language.t("common.requestFailed"),
     description: err instanceof Error ? err.message : String(err),
   })
-}
-
-function stepIndex(step: WslServerStep) {
-  return STEPS.indexOf(step)
-}
-
-function stepTitle(step: WslServerStep) {
-  if (step === "wsl") return "WSL"
-  if (step === "distro") return "Choose distro"
-  return "OpenCode"
-}
-
-function stepState(
-  step: WslServerStep,
-  state: {
-    active: WslServerStep
-    wslReady: boolean
-    distroReady: boolean
-    opencodeReady: boolean
-    opencodeMismatch: boolean
-  },
-) {
-  if (state.active === step) return "current"
-  if (step === "wsl") return state.wslReady ? "done" : "warning"
-  if (step === "distro")
-    return state.distroReady ? "done" : stepIndex(step) > stepIndex(state.active) ? "locked" : "warning"
-  return state.opencodeMismatch
-    ? "warning"
-    : state.opencodeReady
-      ? "done"
-      : stepIndex(step) > stepIndex(state.active)
-        ? "locked"
-        : "warning"
 }

@@ -265,10 +265,6 @@ export function runWslSh(script: string, distro?: string | null, opts?: RunWslOp
   return runWslInDistro(["sh", "-lc", script], distro, opts)
 }
 
-export function runWslBash(script: string, distro?: string | null, opts?: RunWslOptions) {
-  return runWslInDistro(["bash", "-lc", script], distro, opts)
-}
-
 export async function probeWslRuntime(opts?: RunWslOptions): Promise<WslRuntimeCheck> {
   const version = await runWsl(["--version"], opts).catch((error) => ({
     code: 1,

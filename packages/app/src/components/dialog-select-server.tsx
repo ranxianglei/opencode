@@ -44,7 +44,6 @@ function versionOlderThan(current: string | null | undefined, expected: string |
 }
 
 interface DialogSelectServerProps {
-  initialView?: "add-wsl"
   onNavigateHome?: () => void
 }
 
@@ -163,7 +162,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
       showForm: false,
     },
     addWsl: {
-      showWizard: props.initialView === "add-wsl",
+      showWizard: false,
     },
     editServer: {
       id: undefined as string | undefined,
@@ -550,21 +549,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     if (server.defaultKey() === key) await server.setDefault(null)
   }
 
-  function handleRemoveWsl(conn: ServerConnection.Any) {
-    if (!isWslSidecar(conn)) return
-    removeWslMutation.mutate(ServerConnection.key(conn))
-  }
-
-  function handleRetryWsl(conn: ServerConnection.Any) {
-    if (!isWslSidecar(conn)) return
-    retryWslMutation.mutate(ServerConnection.key(conn))
-  }
-
-  function handleUpdateWsl(conn: ServerConnection.Any) {
-    if (!isWslSidecar(conn)) return
-    updateWslMutation.mutate(conn.distro)
-  }
-
   return (
     <Dialog
       title={formTitle()}
@@ -621,7 +605,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
               const blocked = () => health(key)?.healthy === false
               const canChangeDefault = () => server.canDefault() && i.type !== "ssh"
               const canRemove = () => i.type === "http" || wsl
-              const hasMenuActionsBeforeDelete = () => canRemove() && (i.type === "http" || canChangeDefault() || canRetryWsl(i))
               const outdated = () => {
                 const check = wslCheck(i)
                 return versionOlderThan(check?.version, check?.expectedVersion)
@@ -668,7 +651,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                           onPointerDown={(e: PointerEvent) => e.stopPropagation()}
                           onClick={(e: MouseEvent) => {
                             e.stopPropagation()
-                            handleUpdateWsl(i)
+                            if (wslDistro) updateWslMutation.mutate(wslDistro)
                           }}
                         >
                           {updating() ? "Updating OpenCode..." : label()}
@@ -702,7 +685,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                               </DropdownMenu.Item>
                             </Show>
                             <Show when={wsl && canRetryWsl(i)}>
-                              <DropdownMenu.Item onSelect={() => handleRetryWsl(i)}>
+                              <DropdownMenu.Item onSelect={() => retryWslMutation.mutate(key)}>
                                 <DropdownMenu.ItemLabel>Retry start</DropdownMenu.ItemLabel>
                               </DropdownMenu.Item>
                             </Show>
@@ -720,14 +703,14 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                                 </DropdownMenu.ItemLabel>
                               </DropdownMenu.Item>
                             </Show>
-                            <Show when={hasMenuActionsBeforeDelete()}>
+                            <Show when={canRemove() && (i.type === "http" || canChangeDefault() || canRetryWsl(i))}>
                               <DropdownMenu.Separator />
                             </Show>
                             <Show when={canRemove()}>
                               <DropdownMenu.Item
                                 onSelect={() => {
                                   if (wsl) {
-                                    handleRemoveWsl(i)
+                                    removeWslMutation.mutate(key)
                                     return
                                   }
                                   void handleRemove(key)
