@@ -188,11 +188,9 @@ function loadWindow(win: BrowserWindow, html: string) {
 }
 function wireZoom(win: BrowserWindow) {
   win.webContents.setZoomFactor(1)
-  // Disable Chromium's touch/pinch zoom. Keyboard and wheel zoom are handled
-  // in the renderer so the Solid `webviewZoom` signal stays the single source
-  // of truth; a stray `zoom-changed` handler here would race with the renderer
-  // and intermittently snap the factor back to 1.
-  void win.webContents.setVisualZoomLevelLimits(1, 1).catch(() => undefined)
+  win.webContents.on("zoom-changed", () => {
+    win.webContents.setZoomFactor(1)
+  })
 }
 
 function upsertKeyValue(obj: Record<string, any>, keyToChange: string, value: any) {

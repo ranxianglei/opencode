@@ -11,73 +11,35 @@ const OS_NAME = (() => {
   return "unknown"
 })()
 
-const MIN_ZOOM = 0.2
-const MAX_ZOOM = 10
-const KEY_STEP = 0.2
-const WHEEL_STEP = 0.1
-
-const clamp = (value: number) => Math.min(Math.max(value, MIN_ZOOM), MAX_ZOOM)
-
 const [webviewZoom, setWebviewZoom] = createSignal(1)
 
-const apply = (next: number) => {
-  const clamped = clamp(next)
-  if (Math.abs(clamped - webviewZoom()) < 1e-6) return
-  setWebviewZoom(clamped)
-  void window.api.setZoomFactor(clamped).catch(() => undefined)
+const MAX_ZOOM_LEVEL = 10
+const MIN_ZOOM_LEVEL = 0.2
+
+const clamp = (value: number) => Math.min(Math.max(value, MIN_ZOOM_LEVEL), MAX_ZOOM_LEVEL)
+
+const applyZoom = (next: number) => {
+  setWebviewZoom(next)
+  void window.api.setZoomFactor(next)
 }
 
-export const zoomIn = () => apply(webviewZoom() + KEY_STEP)
-export const zoomOut = () => apply(webviewZoom() - KEY_STEP)
-export const zoomReset = () => apply(1)
-
-// Seed the signal from the main process so renderer and webContents agree
-// across cold starts, reloads, and HMR refreshes (which would otherwise
-// reinitialize the signal to 1 while webContents kept its prior factor).
-void window.api
-  .getZoomFactor()
-  .then((initial) => {
-    if (typeof initial === "number" && Number.isFinite(initial)) {
-      setWebviewZoom(clamp(initial))
-    }
-  })
-  .catch(() => undefined)
-
-// Keyboard accelerators. preventDefault stops Chromium's built-in zoom
-// accelerators from firing in parallel (which previously caused races).
 window.addEventListener("keydown", (event) => {
-  const mod = OS_NAME === "macos" ? event.metaKey : event.ctrlKey
-  if (!mod || event.altKey) return
+  if (!(OS_NAME === "macos" ? event.metaKey : event.ctrlKey)) return
 
-  if (event.key === "-" || event.key === "_") {
+  if (event.key === "-") {
     event.preventDefault()
-    zoomOut()
+    applyZoom(clamp(webviewZoom() - 0.2))
     return
   }
   if (event.key === "=" || event.key === "+") {
     event.preventDefault()
-    zoomIn()
+    applyZoom(clamp(webviewZoom() + 0.2))
     return
   }
   if (event.key === "0") {
     event.preventDefault()
-    zoomReset()
-    return
+    applyZoom(1)
   }
 })
-
-// Wheel zoom. Chromium synthesizes `wheel` with `ctrlKey: true` for trackpad
-// pinch on every platform, so checking ctrlKey uniformly covers pinch-to-zoom
-// as well as real ctrl+scroll / cmd+scroll.
-window.addEventListener(
-  "wheel",
-  (event) => {
-    if (!event.ctrlKey && !event.metaKey) return
-    event.preventDefault()
-    const step = event.deltaY > 0 ? -WHEEL_STEP : WHEEL_STEP
-    apply(webviewZoom() + step)
-  },
-  { passive: false },
-)
 
 export { webviewZoom }

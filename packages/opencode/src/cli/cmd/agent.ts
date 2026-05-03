@@ -10,8 +10,11 @@ import fs from "fs/promises"
 import { Filesystem } from "@/util/filesystem"
 import matter from "gray-matter"
 import { Instance } from "../../project/instance"
+import { WithInstance } from "../../project/with-instance"
 import { EOL } from "os"
 import type { Argv } from "yargs"
+import { Effect } from "effect"
+import { effectCmd } from "../effect-cmd"
 
 type AgentMode = "all" | "primary" | "subagent"
 
@@ -61,7 +64,7 @@ const AgentCreateCommand = cmd({
         describe: "model to use in the format of provider/model",
       }),
   async handler(args) {
-    await Instance.provide({
+    await WithInstance.provide({
       directory: process.cwd(),
       async fn() {
         const cliPath = args.path
@@ -232,28 +235,23 @@ const AgentCreateCommand = cmd({
   },
 })
 
-const AgentListCommand = cmd({
+const AgentListCommand = effectCmd({
   command: "list",
   describe: "list all available agents",
-  async handler() {
-    await Instance.provide({
-      directory: process.cwd(),
-      async fn() {
-        const agents = await AppRuntime.runPromise(Agent.Service.use((svc) => svc.list()))
-        const sortedAgents = agents.sort((a, b) => {
-          if (a.native !== b.native) {
-            return a.native ? -1 : 1
-          }
-          return a.name.localeCompare(b.name)
-        })
-
-        for (const agent of sortedAgents) {
-          process.stdout.write(`${agent.name} (${agent.mode})` + EOL)
-          process.stdout.write(`  ${JSON.stringify(agent.permission, null, 2)}` + EOL)
-        }
-      },
+  handler: Effect.fn("Cli.agent.list")(function* () {
+    const agents = yield* Agent.Service.use((svc) => svc.list())
+    const sortedAgents = agents.sort((a, b) => {
+      if (a.native !== b.native) {
+        return a.native ? -1 : 1
+      }
+      return a.name.localeCompare(b.name)
     })
-  },
+
+    for (const agent of sortedAgents) {
+      process.stdout.write(`${agent.name} (${agent.mode})` + EOL)
+      process.stdout.write(`  ${JSON.stringify(agent.permission, null, 2)}` + EOL)
+    }
+  }),
 })
 
 export const AgentCommand = cmd({
