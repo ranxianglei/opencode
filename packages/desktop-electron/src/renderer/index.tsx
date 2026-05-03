@@ -67,6 +67,7 @@ import {
   useCommand,
   useWslServers,
 } from "@opencode-ai/app"
+import * as Sentry from "@sentry/solid"
 import type { AsyncStorage } from "@solid-primitives/storage"
 import { MemoryRouter } from "@solidjs/router"
 import { createEffect, createMemo, createResource, onCleanup, onMount } from "solid-js"
@@ -82,6 +83,25 @@ import { useTheme } from "@opencode-ai/ui/theme"
 const root = document.getElementById("root")
 if (import.meta.env.DEV && !(root instanceof HTMLElement)) {
   throw new Error(t("error.dev.rootNotFound"))
+}
+
+if (import.meta.env.VITE_SENTRY_DSN) {
+  Sentry.init({
+    dsn: import.meta.env.VITE_SENTRY_DSN,
+    environment: import.meta.env.VITE_SENTRY_ENVIRONMENT ?? import.meta.env.MODE,
+    release: import.meta.env.VITE_SENTRY_RELEASE ?? `desktop-electron@${pkg.version}`,
+    initialScope: {
+      tags: {
+        platform: "desktop-electron",
+      },
+    },
+    integrations: (integrations) => {
+      return integrations.filter(
+        (i) =>
+          i.name !== "Breadcrumbs" && !(import.meta.env.OPENCODE_CHANNEL === "prod" && i.name === "GlobalHandlers"),
+      )
+    },
+  })
 }
 
 void initI18n()

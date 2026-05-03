@@ -1,4 +1,5 @@
 import { test, expect, mock, beforeEach } from "bun:test"
+import { InstanceRuntime } from "../../src/project/instance-runtime"
 import { Effect } from "effect"
 import type { MCP as MCPNS } from "../../src/mcp/index"
 
@@ -197,7 +198,7 @@ function withInstance(
       fn: async () => {
         await Effect.runPromise(MCP.Service.use(fn).pipe(Effect.provide(MCP.defaultLayer)))
         // dispose instance to clean up state between tests
-        await Instance.dispose()
+        await InstanceRuntime.disposeInstance(Instance.current)
       },
     })
   }

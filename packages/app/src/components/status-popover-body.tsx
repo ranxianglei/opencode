@@ -3,16 +3,20 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Icon } from "@opencode-ai/ui/icon"
 import { Switch } from "@opencode-ai/ui/switch"
 import { Tabs } from "@opencode-ai/ui/tabs"
-import { useMutation } from "@tanstack/solid-query"
+import { useMutation, useQueryClient } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
 import { useNavigate } from "@solidjs/router"
 import { type Accessor, batch, createEffect, createMemo, For, type JSXElement, onCleanup, Show, startTransition } from "solid-js"
-import { createStore } from "solid-js/store"
-import { ServerRow } from "@/components/server/server-row"
+import { createStore, reconcile } from "solid-js/store"
+import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
+import { loadMcpQuery } from "@/context/global-sync"
 import { useLanguage } from "@/context/language"
 import { useSDK } from "@/context/sdk"
 import { ServerConnection, useServer } from "@/context/server"
 import { useSync } from "@/context/sync"
+import { useCheckServerHealth, type ServerHealth } from "@/utils/server-health"
+
+const pollMs = 10_000
 
 const pluginEmptyMessage = (value: string, file: string): JSXElement => {
   const parts = value.split(file)
@@ -26,18 +30,74 @@ const pluginEmptyMessage = (value: string, file: string): JSXElement => {
   )
 }
 
+const listServersByHealth = (
+  list: ServerConnection.Any[],
+  active: ServerConnection.Key | undefined,
+  status: Record<ServerConnection.Key, ServerHealth | undefined>,
+) => {
+  if (!list.length) return list
+  const order = new Map(list.map((conn, index) => [conn, index] as const))
+  const rank = (value?: ServerHealth) => {
+    if (value?.healthy === true) return 0
+    if (value?.healthy === false) return 2
+    return 1
+  }
+
+  return list.slice().sort((a, b) => {
+    if (ServerConnection.key(a) === active) return -1
+    if (ServerConnection.key(b) === active) return 1
+    const diff = rank(status[ServerConnection.key(a)]) - rank(status[ServerConnection.key(b)])
+    if (diff !== 0) return diff
+    return (order.get(a) ?? 0) - (order.get(b) ?? 0)
+  })
+}
+
+const useServerHealth = (servers: Accessor<ServerConnection.Any[]>, enabled: Accessor<boolean>) => {
+  const checkServerHealth = useCheckServerHealth()
+  const [status, setStatus] = createStore({} as Record<ServerConnection.Key, ServerHealth | undefined>)
+
+  createEffect(() => {
+    if (!enabled()) {
+      setStatus(reconcile({}))
+      return
+    }
+    const list = servers()
+    let dead = false
+
+    const refresh = async () => {
+      const results: Record<ServerConnection.Key, ServerHealth> = {}
+      await Promise.all(
+        list.map(async (conn) => {
+          results[ServerConnection.key(conn)] = await checkServerHealth(conn.http)
+        }),
+      )
+      if (dead) return
+      setStatus(reconcile(results))
+    }
+
+    void refresh()
+    const id = setInterval(() => void refresh(), pollMs)
+    onCleanup(() => {
+      dead = true
+      clearInterval(id)
+    })
+  })
+
+  return status
+}
+
 const useMcpToggleMutation = () => {
   const sync = useSync()
   const sdk = useSDK()
   const language = useLanguage()
+  const queryClient = useQueryClient()
 
   return useMutation(() => ({
     mutationFn: async (name: string) => {
       const status = sync.data.mcp[name]
       await (status?.status === "connected" ? sdk.client.mcp.disconnect({ name }) : sdk.client.mcp.connect({ name }))
-      const result = await sdk.client.mcp.status()
-      if (result.data) sync.set("mcp", result.data)
     },
+    onSuccess: () => queryClient.refetchQueries({ queryKey: loadMcpQuery(sync.directory).queryKey }),
     onError: (err) => {
       showToast({
         variant: "error",
@@ -54,60 +114,6 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   const dialog = useDialog()
   const language = useLanguage()
   const navigate = useNavigate()
-  const sdk = useSDK()
-
-  const [load, setLoad] = createStore({
-    lspDone: false,
-    lspLoading: false,
-    mcpDone: false,
-    mcpLoading: false,
-  })
-
-  const fail = (err: unknown) => {
-    showToast({
-      variant: "error",
-      title: language.t("common.requestFailed"),
-      description: err instanceof Error ? err.message : String(err),
-    })
-  }
-
-  createEffect(() => {
-    if (!props.shown()) return
-
-    if (!sync.data.mcp_ready && !load.mcpDone && !load.mcpLoading) {
-      setLoad("mcpLoading", true)
-      void sdk.client.mcp
-        .status()
-        .then((result) => {
-          sync.set("mcp", result.data ?? {})
-          sync.set("mcp_ready", true)
-        })
-        .catch((err) => {
-          setLoad("mcpDone", true)
-          fail(err)
-        })
-        .finally(() => {
-          setLoad("mcpLoading", false)
-        })
-    }
-
-    if (!sync.data.lsp_ready && !load.lspDone && !load.lspLoading) {
-      setLoad("lspLoading", true)
-      void sdk.client.lsp
-        .status()
-        .then((result) => {
-          sync.set("lsp", result.data ?? [])
-          sync.set("lsp_ready", true)
-        })
-        .catch((err) => {
-          setLoad("lspDone", true)
-          fail(err)
-        })
-        .finally(() => {
-          setLoad("lspLoading", false)
-        })
-    }
-  })
 
   let dialogRun = 0
   let dialogDead = false
@@ -122,6 +128,8 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
     if (list.every((item) => ServerConnection.key(item) !== ServerConnection.key(current))) return [current, ...list]
     return [current, ...list.filter((item) => ServerConnection.key(item) !== ServerConnection.key(current))]
   })
+  const health = useServerHealth(servers, props.shown)
+  const sortedServers = createMemo(() => listServersByHealth(servers(), server.key, health))
   const toggleMcp = useMcpToggleMutation()
   const mcpNames = createMemo(() => Object.keys(sync.data.mcp ?? {}).sort((a, b) => a.localeCompare(b)))
   const mcpStatus = (name: string) => sync.data.mcp?.[name]?.status
@@ -146,7 +154,7 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
       >
         <Tabs.List data-slot="tablist" class="bg-transparent border-b-0 px-4 pt-2 pb-0 gap-4 h-10">
           <Tabs.Trigger value="servers" data-slot="tab" class="text-12-regular">
-            {servers().length > 0 ? `${servers().length} ` : ""}
+            {sortedServers().length > 0 ? `${sortedServers().length} ` : ""}
             {language.t("status.popover.tab.servers")}
           </Tabs.Trigger>
           <Tabs.Trigger value="mcp" data-slot="tab" class="text-12-regular">
@@ -166,14 +174,21 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
         <Tabs.Content value="servers">
           <div class="flex flex-col px-2 pb-2">
             <div class="flex flex-col p-3 bg-background-base rounded-sm min-h-14">
-              <For each={servers()}>
+              <For each={sortedServers()}>
                 {(s) => {
                   const key = ServerConnection.key(s)
+                  const blocked = () => health[key]?.healthy === false
                   return (
                     <button
                       type="button"
-                      class="flex items-center gap-2 w-full h-8 pl-3 pr-1.5 py-1.5 rounded-md transition-colors text-left hover:bg-surface-raised-base-hover"
+                      class="flex items-center gap-2 w-full h-8 pl-3 pr-1.5 py-1.5 rounded-md transition-colors text-left"
+                      classList={{
+                        "hover:bg-surface-raised-base-hover": !blocked(),
+                        "cursor-not-allowed": blocked(),
+                      }}
+                      aria-disabled={blocked()}
                       onClick={() => {
+                        if (blocked()) return
                         startTransition(() => {
                           batch(() => {
                             if (server.key !== key) {
@@ -188,8 +203,11 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
                         })
                       }}
                     >
+                      <ServerHealthIndicator health={health[key]} />
                       <ServerRow
                         conn={s}
+                        dimmed={blocked()}
+                        status={health[key]}
                         class="flex items-center gap-2 w-full min-w-0"
                         nameClass="text-14-regular text-text-base truncate"
                         versionClass="text-12-regular text-text-weak truncate"

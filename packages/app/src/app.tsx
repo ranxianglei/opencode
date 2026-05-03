@@ -1,5 +1,6 @@
 import "@/index.css"
 import { Button } from "@opencode-ai/ui/button"
+import * as Sentry from "@sentry/solid"
 import { I18nProvider } from "@opencode-ai/ui/context"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { DialogProvider } from "@opencode-ai/ui/context/dialog"
@@ -83,7 +84,15 @@ declare global {
 }
 
 function QueryProvider(props: ParentProps) {
-  const client = new QueryClient()
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: {
+        refetchOnReconnect: false,
+        refetchOnMount: false,
+        refetchOnWindowFocus: false,
+      },
+    },
+  })
   return <QueryClientProvider client={client}>{props.children}</QueryClientProvider>
 }
 
@@ -141,7 +150,12 @@ export function AppBaseProviders(props: ParentProps<{ locale?: Locale }>) {
       >
         <LanguageProvider locale={props.locale}>
           <UiI18nBridge>
-            <ErrorBoundary fallback={(error) => <ErrorPage error={error} />}>
+            <ErrorBoundary
+              fallback={(error) => {
+                Sentry.captureException(error)
+                return <ErrorPage error={error} />
+              }}
+            >
               <QueryProvider>
                 <WslServersProvider>
                   <DialogProvider>
