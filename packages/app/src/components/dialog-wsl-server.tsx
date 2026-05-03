@@ -103,6 +103,11 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
     return !!check?.resolvedPath && !check.error
   })
   const allReady = createMemo(() => wslReady() && distroReady() && opencodeReady())
+  const addDisabled = createMemo(() => {
+    const job = current()?.job
+    if (!job) return store.adding
+    return store.adding || job.kind !== "probe-opencode"
+  })
   const recommendedStep = createMemo<WslServerStep>(() => {
     if (!wslReady()) return "wsl"
     if (!distroReady()) return "distro"
@@ -555,7 +560,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
               <Button variant="ghost" size="large" disabled={store.adding} onClick={() => dialog.close()}>
                 Cancel
               </Button>
-              <Button variant="primary" size="large" disabled={store.adding || busy()} onClick={() => void finish()}>
+              <Button variant="primary" size="large" disabled={addDisabled()} onClick={() => void finish()}>
                 {store.adding ? "Adding..." : "Add WSL server"}
               </Button>
             </div>
