@@ -8,7 +8,7 @@ import { List } from "@opencode-ai/ui/list"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { useMutation } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
-import { batch, createEffect, createMemo, createResource, onCleanup, Show, startTransition, untrack } from "solid-js"
+import { batch, createEffect, createMemo, createResource, For, onCleanup, Show, startTransition, untrack } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { DialogWslServer } from "@/components/dialog-wsl-server"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
@@ -324,9 +324,18 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     if (!isWslSidecar(conn)) return
     return wslState()?.servers.find((item) => item.config.id === ServerConnection.key(conn))?.runtime
   }
+  const nonReadyWslServers = createMemo(() =>
+    (wslState()?.servers ?? []).filter((item) => item.runtime.kind !== "ready"),
+  )
   const canRetryWsl = (conn: ServerConnection.Any) => {
     const runtime = wslRuntime(conn)
     return runtime?.kind === "failed" || runtime?.kind === "stopped"
+  }
+  const canRetryWslRuntime = (kind: string) => kind === "failed" || kind === "stopped"
+  const wslRuntimeLabel = (kind: string) => {
+    if (kind === "starting") return "Starting"
+    if (kind === "failed") return "Failed"
+    return "Stopped"
   }
 
   const sortedItems = createMemo(() => {
@@ -586,6 +595,68 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
             </Show>
           }
         >
+          <Show when={nonReadyWslServers().length > 0}>
+            <div class="px-5">
+              <div class="bg-surface-base rounded-md overflow-hidden">
+                <For each={nonReadyWslServers()}>
+                  {(item) => {
+                    const key = ServerConnection.Key.make(item.config.id)
+                    const retryable = () => canRetryWslRuntime(item.runtime.kind)
+                    return (
+                      <div class="min-h-14 p-3 flex items-center gap-3 border-b border-border-weak-base last:border-b-0">
+                        <div
+                          classList={{
+                            "size-1.5 rounded-full shrink-0": true,
+                            "bg-icon-critical-base": item.runtime.kind === "failed",
+                            "bg-border-weak-base": item.runtime.kind !== "failed",
+                          }}
+                        />
+                        <div class="flex items-center gap-2 min-w-0 flex-1">
+                          <span class="text-14-medium text-text-base truncate">{item.config.distro}</span>
+                          <span class="text-11-regular text-text-weak border border-border-weak-base bg-surface-base px-1.5 py-0.5 rounded-md shrink-0">
+                            WSL
+                          </span>
+                          <span class="text-12-regular text-text-weak truncate">
+                            {wslRuntimeLabel(item.runtime.kind)}
+                          </span>
+                        </div>
+                        <DropdownMenu>
+                          <DropdownMenu.Trigger
+                            as={IconButton}
+                            icon="dot-grid"
+                            variant="ghost"
+                            class="shrink-0 size-8 hover:bg-surface-base-hover data-[expanded]:bg-surface-base-active"
+                            onClick={(e: MouseEvent) => e.stopPropagation()}
+                            onPointerDown={(e: PointerEvent) => e.stopPropagation()}
+                          />
+                          <DropdownMenu.Portal>
+                            <DropdownMenu.Content class="mt-1">
+                              <Show when={retryable()}>
+                                <DropdownMenu.Item onSelect={() => retryWslMutation.mutate(key)}>
+                                  <DropdownMenu.ItemLabel>Retry start</DropdownMenu.ItemLabel>
+                                </DropdownMenu.Item>
+                              </Show>
+                              <Show when={retryable()}>
+                                <DropdownMenu.Separator />
+                              </Show>
+                              <DropdownMenu.Item
+                                onSelect={() => removeWslMutation.mutate(key)}
+                                class="text-text-on-critical-base hover:bg-surface-critical-weak"
+                              >
+                                <DropdownMenu.ItemLabel>
+                                  {language.t("dialog.server.menu.delete")}
+                                </DropdownMenu.ItemLabel>
+                              </DropdownMenu.Item>
+                            </DropdownMenu.Content>
+                          </DropdownMenu.Portal>
+                        </DropdownMenu>
+                      </div>
+                    )
+                  }}
+                </For>
+              </div>
+            </div>
+          </Show>
           <List
             search={{
               placeholder: language.t("dialog.server.search.placeholder"),
