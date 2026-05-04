@@ -28,7 +28,6 @@ export type WslDistroProbe = {
   canExecute: boolean
   hasBash: boolean
   hasCurl: boolean
-  isRoot: boolean | null
   error: string | null
 }
 export type WslOpencodeCheck = {

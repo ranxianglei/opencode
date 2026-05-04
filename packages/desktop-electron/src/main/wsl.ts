@@ -348,24 +348,20 @@ export async function probeWslDistro(name: string, opts?: RunWslOptions): Promis
       canExecute: false,
       hasBash: false,
       hasCurl: false,
-      isRoot: null,
       error: summarize(executable.stderr || executable.stdout) || "Cannot execute commands in distro",
     }
   }
 
-  const [bash, curl, user] = await Promise.all([
+  const [bash, curl] = await Promise.all([
     runWslSh("command -v bash >/dev/null && printf yes || printf no", name, opts),
     runWslSh("command -v curl >/dev/null && printf yes || printf no", name, opts),
-    runWslSh("id -un 2>/dev/null || true", name, opts),
   ])
 
-  const username = summarize(user.stdout)
   return {
     name,
     canExecute: true,
     hasBash: bash.code === 0 && summarize(bash.stdout) === "yes",
     hasCurl: curl.code === 0 && summarize(curl.stdout) === "yes",
-    isRoot: username ? username === "root" : null,
     error: null,
   }
 }

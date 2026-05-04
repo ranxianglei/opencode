@@ -61,7 +61,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
   const distroWarningProbe = createMemo(() => {
     const probe = selectedProbe()
     if (!probe) return null
-    if (distroReady() && !probe.isRoot) return null
+    if (distroReady()) return null
     return probe
   })
   const distroUnavailableMessage = createMemo(() => {
@@ -453,8 +453,7 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                 when={
                   selectedInstalled()?.version === 1 ||
                   distroUnavailableMessage() ||
-                  distroMissingTools() ||
-                  distroWarningProbe()?.isRoot
+                  distroMissingTools()
                 }
               >
                 <div class="rounded-md border border-border-weak-base px-3 py-3 flex flex-col gap-1">
@@ -466,11 +465,6 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                   </Show>
                   <Show when={distroMissingTools()}>
                     <div class="text-12-regular text-text-warning-base">This distro needs bash and curl.</div>
-                  </Show>
-                  <Show when={distroWarningProbe()?.isRoot}>
-                    <div class="text-12-regular text-text-warning-base">
-                      This distro is using the root user right now.
-                    </div>
                   </Show>
                 </div>
               </Show>

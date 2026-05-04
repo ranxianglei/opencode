@@ -275,7 +275,6 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     },
     onSuccess: async (key) => {
       server.remove(key)
-      if (defaultServer.defaultKey() === key) await defaultServer.setDefault(null)
     },
     onError: (err) => showRequestError(language, err),
   }))
@@ -607,7 +606,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
               const wsl = isWslSidecar(i)
               const wslDistro = wsl ? i.distro : undefined
               const blocked = () => health(key)?.healthy === false
-              const canChangeDefault = () => defaultServer.canDefault() && i.type !== "ssh"
+              const canChangeDefault = () => defaultServer.canDefault() && i.type === "http"
               const canRemove = () => i.type === "http" || wsl
               const opencodeAction = () => {
                 const check = wslCheck(i)
