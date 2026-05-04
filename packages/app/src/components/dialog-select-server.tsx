@@ -8,7 +8,7 @@ import { List } from "@opencode-ai/ui/list"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { useMutation } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
-import { batch, createEffect, createMemo, createResource, For, onCleanup, Show, startTransition, untrack } from "solid-js"
+import { batch, createEffect, createMemo, createResource, For, onCleanup, Show, untrack } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { DialogWslServer } from "@/components/dialog-wsl-server"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
@@ -386,28 +386,21 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     const nextKey = ServerConnection.key(conn)
     const changed = server.key !== nextKey
 
-    const navigateHome = () => {
-      if (changed && typeof window !== "undefined" && window.history?.replaceState) {
-        window.history.replaceState(null, "", "/")
+    const navigateHome = () => props.onNavigateHome?.()
+
+    const apply = () => {
+      dialog.close()
+      if (persist && conn.type === "http") {
+        server.add(conn)
+        navigateHome()
         return
       }
-      props.onNavigateHome?.()
-    }
 
-    const apply = () =>
-      startTransition(() => {
-        dialog.close()
-        if (persist && conn.type === "http") {
-          server.add(conn)
-          navigateHome()
-          return
-        }
-
-        batch(() => {
-          navigateHome()
-          server.setActive(nextKey)
-        })
+      batch(() => {
+        navigateHome()
+        server.setActive(nextKey)
       })
+    }
 
     if (!changed) {
       await apply()
