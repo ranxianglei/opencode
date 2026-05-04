@@ -84,15 +84,10 @@ export async function spawnWslSidecar(
   distro: string,
   opts: { onLine?: (line: WslCommandLine) => void; healthTimeoutMs?: number } = {},
 ): Promise<WslSidecar> {
-  // Every wsl.exe invocation below goes through wslArgs which injects
-  // `--user root`. That matters even when a distro has DefaultUid=0
-  // (i.e. the interactive first-run user account setup never ran):
-  // explicit --user root bypasses the OOBE hook that would otherwise
-  // prompt on stdin, so we can resolve opencode and spawn the sidecar
-  // without any machine-wide first-run handshake. The earlier Ubuntu
-  // hang was caused by invoking without --user (default uid 0 triggers
-  // OOBE), not by the registry state itself. We still have a 20s
-  // timeout in runCommand as a safety net for true wsl.exe wedges.
+  // Do not pass --user here: the sidecar should inherit the distro's
+  // default user so config, auth, git, ssh, and file ownership match the
+  // user's normal WSL environment. If that default user is root, WSL will
+  // choose root itself.
   const opencode = await resolveWslOpencode(distro)
   if (!opencode) throw new Error(`OpenCode is not installed in ${distro}`)
 

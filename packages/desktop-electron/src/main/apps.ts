@@ -45,7 +45,7 @@ export async function wslPath(path: string, mode: "windows" | "linux" | null, di
 
   const flag = mode === "windows" ? "-w" : "-u"
   try {
-    const resolved = path.startsWith("~") ? `${distro ? await resolveWslHome(distro) : "/root"}${path.slice(1)}` : path
+    const resolved = path.startsWith("~") ? `${await resolveWslHome(distro)}${path.slice(1)}` : path
     const input = mode === "linux" ? resolved.replace(/\\/g, "/") : resolved
     const output = await runWslInDistro(["wslpath", flag, input], distro)
     if (output.code !== 0) {

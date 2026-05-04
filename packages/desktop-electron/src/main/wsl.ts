@@ -33,17 +33,9 @@ export type RunWslOptions = {
 const DEFAULT_WSL_TIMEOUT_MS = 20_000
 const DEFAULT_WSL_INSTALL_TIMEOUT_MS = 15 * 60_000
 
-// `--user root` bypasses the distro's default-user requirement. A freshly
-// installed WSL distro (Ubuntu-24.04 in particular) prompts interactively
-// for a username/password on its first invocation; when spawned with
-// piped stdio that prompt blocks forever or silently reads garbage,
-// leaving the sidecar hanging and the server unhealthy. Running as root
-// sidesteps the entire first-run setup flow — opencode only needs an
-// HTTP listener in the distro, not a per-user environment, so root is
-// a safe default for the sidecar process.
 export function wslArgs(args: string[], distro?: string | null) {
-  if (distro) return ["-d", distro, "--user", "root", "--", ...args]
-  return ["--user", "root", "--", ...args]
+  if (distro) return ["-d", distro, "--", ...args]
+  return ["--", ...args]
 }
 
 export function runWsl(args: string[], opts: RunWslOptions = {}) {
@@ -207,60 +199,6 @@ export function runWslInDistro(args: string[], distro?: string | null, opts?: Ru
   return runWsl(wslArgs(args, distro), opts)
 }
 
-export type WslRegistryDistro = {
-  name: string
-  defaultUid: number
-  state: number
-  version: number
-}
-
-// Read LXSS metadata from the Windows registry. This never invokes
-// wsl.exe, so it is safe to call when wsl.exe itself is wedged.
-// DefaultUid === 0 on a user-oriented distro means the first-run
-// "Create a default UNIX user account" step never completed.
-//
-// Uses a `reg query` fallback strategy because some hosts (e.g. Electron
-// spawning PowerShell with certain user profiles) return nothing from the
-// PowerShell registry provider; parsing `reg query` output is ugly but
-// native Windows and always available.
-export async function readWslDistrosFromRegistry(opts?: RunWslOptions): Promise<WslRegistryDistro[]> {
-  // `reg query` prints each subkey's values in a stable format:
-  //
-  //   HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Lxss\{guid}
-  //       DistributionName    REG_SZ    Ubuntu-24.04
-  //       DefaultUid          REG_DWORD 0x0
-  //       State               REG_DWORD 0x1
-  //       Version             REG_DWORD 0x2
-  //       ...
-  const result = await runCommand(
-    "reg.exe",
-    ["query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss", "/s"],
-    opts,
-  )
-  const stdout = result.stdout
-  if (result.code !== 0 || !stdout) {
-    return []
-  }
-  const blocks = stdout.split(/\r?\n\r?\n/)
-  const out: WslRegistryDistro[] = []
-  for (const block of blocks) {
-    const header = block.match(/^(HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss\\\{[^}]+\})/i)
-    if (!header) continue
-    const name = block.match(/^\s+DistributionName\s+REG_SZ\s+(.+?)\s*$/m)?.[1]
-    if (!name) continue
-    const uidHex = block.match(/^\s+DefaultUid\s+REG_DWORD\s+0x([0-9a-f]+)\s*$/im)?.[1] ?? "0"
-    const stateHex = block.match(/^\s+State\s+REG_DWORD\s+0x([0-9a-f]+)\s*$/im)?.[1] ?? "0"
-    const versionHex = block.match(/^\s+Version\s+REG_DWORD\s+0x([0-9a-f]+)\s*$/im)?.[1] ?? "0"
-    out.push({
-      name,
-      defaultUid: Number.parseInt(uidHex, 16),
-      state: Number.parseInt(stateHex, 16),
-      version: Number.parseInt(versionHex, 16),
-    })
-  }
-  return out
-}
-
 export function runWslSh(script: string, distro?: string | null, opts?: RunWslOptions) {
   return runWslInDistro(["sh", "-lc", script], distro, opts)
 }
@@ -366,55 +304,15 @@ export async function probeWslDistro(name: string, opts?: RunWslOptions): Promis
   }
 }
 
-async function readWslDefaultUser(distro: string, opts?: RunWslOptions) {
-  const entry = (await readWslDistrosFromRegistry(opts)).find((item) => item.name === distro)
-  if (!entry || entry.defaultUid === 0) return null
-
-  const passwd = firstLine(
-    (
-      await runWslSh(
-        [
-          "if command -v getent >/dev/null 2>&1; then",
-          `  getent passwd ${entry.defaultUid}`,
-          "else",
-          `  awk -F: '$3 == ${entry.defaultUid} { print; exit }' /etc/passwd`,
-          "fi",
-        ].join("\n"),
-        distro,
-        opts,
-      )
-    ).stdout,
-  )
-  if (!passwd) return null
-
-  const parts = passwd.split(":")
-  const username = parts[0]?.trim() ?? ""
-  const home = parts[5]?.trim() ?? ""
-  if (!home) return null
-  return { username: username || null, home }
-}
-
-export async function resolveWslHome(distro: string, opts?: RunWslOptions) {
-  return (await readWslDefaultUser(distro, opts))?.home ?? "/root"
-}
-
-function opencodeCandidate(path: string) {
-  return `if [ -x ${shellEscape(path)} ]; then printf "%s\\n" ${shellEscape(path)}; fi`
+export async function resolveWslHome(distro?: string | null, opts?: RunWslOptions) {
+  return firstLine((await runWslSh('printf "%s\\n" "$HOME"', distro, opts)).stdout) ?? "/"
 }
 
 export async function resolveWslOpencode(distro: string, opts?: RunWslOptions) {
-  const command = firstLine((await runWslSh("command -v opencode 2>/dev/null || true", distro, opts)).stdout)
-  if (command && !command.startsWith("/mnt/")) return command
+  const command = firstLine((await runWslSh("command -v opencode 2>/dev/null | grep -v '^/mnt/' | head -n 1 || true", distro, opts)).stdout)
+  if (command) return command
 
-  const home = await resolveWslHome(distro, opts)
   for (const candidate of [
-    ...(home !== "/root"
-      ? [
-          opencodeCandidate(`${home}/.local/bin/opencode`),
-          opencodeCandidate(`${home}/bin/opencode`),
-          opencodeCandidate(`${home}/.opencode/bin/opencode`),
-        ]
-      : []),
     'if [ -x "${XDG_BIN_DIR:-$HOME/.local/bin}/opencode" ]; then printf "%s\\n" "${XDG_BIN_DIR:-$HOME/.local/bin}/opencode"; fi',
     'if [ -x "$HOME/bin/opencode" ]; then printf "%s\\n" "$HOME/bin/opencode"; fi',
     'if [ -x "$HOME/.opencode/bin/opencode" ]; then printf "%s\\n" "$HOME/.opencode/bin/opencode"; fi',
