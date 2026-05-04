@@ -60,40 +60,6 @@ export function registerIpcHandlers(deps: Deps) {
     throw new Error(`Invalid ${name}`)
   }
 
-  const trustedSender = (event: IpcMainEvent | IpcMainInvokeEvent) => {
-    const raw = event.senderFrame?.url ?? event.sender.getURL()
-    try {
-      const url = new URL(raw)
-      if (url.protocol === "oc:" && url.hostname === "renderer") return true
-      if (!app.isPackaged && (url.hostname === "127.0.0.1" || url.hostname === "localhost")) return true
-    } catch {
-      return false
-    }
-    return false
-  }
-
-  const requireTrustedSender = (event: IpcMainEvent | IpcMainInvokeEvent) => {
-    if (trustedSender(event)) return
-    throw new Error("Untrusted IPC sender")
-  }
-
-  const handle = <Args extends unknown[]>(
-    channel: string,
-    listener: (event: IpcMainInvokeEvent, ...args: Args) => unknown,
-  ) => {
-    ipcMain.handle(channel, (event, ...args) => {
-      requireTrustedSender(event)
-      return listener(event, ...(args as Args))
-    })
-  }
-
-  const on = <Args extends unknown[]>(channel: string, listener: (event: IpcMainEvent, ...args: Args) => void) => {
-    ipcMain.on(channel, (event, ...args) => {
-      if (!trustedSender(event)) return
-      listener(event, ...(args as Args))
-    })
-  }
-
   const wslSubscriptions = new Map<number, () => void>()
   const unsubscribeWsl = (id: number) => {
     const off = wslSubscriptions.get(id)
@@ -107,12 +73,12 @@ export function registerIpcHandlers(deps: Deps) {
     wslSubscriptions.clear()
   })
 
-  handle("kill-sidecar", () => deps.killSidecar())
-  handle("await-initialization", (event: IpcMainInvokeEvent) => {
+  ipcMain.handle("kill-sidecar", () => deps.killSidecar())
+  ipcMain.handle("await-initialization", (event: IpcMainInvokeEvent) => {
     const send = (step: InitStep) => event.sender.send("init-step", step)
     return deps.awaitInitialization(send)
   })
-  handle("wsl-servers-subscribe", (event) => {
+  ipcMain.handle("wsl-servers-subscribe", (event) => {
     const id = event.sender.id
     if (wslSubscriptions.has(id)) return
     wslSubscriptions.set(
@@ -127,83 +93,83 @@ export function registerIpcHandlers(deps: Deps) {
     )
     event.sender.once("destroyed", () => unsubscribeWsl(id))
   })
-  handle("wsl-servers-unsubscribe", (event) => unsubscribeWsl(event.sender.id))
-  handle("wsl-servers-get-state", () => deps.getWslServersState())
-  handle("wsl-servers-probe-runtime", () => deps.wslServersProbeRuntime())
-  handle("wsl-servers-refresh-distros", () => deps.wslServersRefreshDistros())
-  handle("wsl-servers-install-wsl", () => deps.wslServersInstallWsl())
-  handle("wsl-servers-install-distro", (_event: IpcMainInvokeEvent, name: string) =>
+  ipcMain.handle("wsl-servers-unsubscribe", (event) => unsubscribeWsl(event.sender.id))
+  ipcMain.handle("wsl-servers-get-state", () => deps.getWslServersState())
+  ipcMain.handle("wsl-servers-probe-runtime", () => deps.wslServersProbeRuntime())
+  ipcMain.handle("wsl-servers-refresh-distros", () => deps.wslServersRefreshDistros())
+  ipcMain.handle("wsl-servers-install-wsl", () => deps.wslServersInstallWsl())
+  ipcMain.handle("wsl-servers-install-distro", (_event: IpcMainInvokeEvent, name: string) =>
     deps.wslServersInstallDistro(requireString("distro", name)),
   )
-  handle("wsl-servers-probe-distro", (_event: IpcMainInvokeEvent, name: string) =>
+  ipcMain.handle("wsl-servers-probe-distro", (_event: IpcMainInvokeEvent, name: string) =>
     deps.wslServersProbeDistro(requireString("distro", name)),
   )
-  handle("wsl-servers-probe-opencode", (_event: IpcMainInvokeEvent, name: string) =>
+  ipcMain.handle("wsl-servers-probe-opencode", (_event: IpcMainInvokeEvent, name: string) =>
     deps.wslServersProbeOpencode(requireString("distro", name)),
   )
-  handle("wsl-servers-install-opencode", (_event: IpcMainInvokeEvent, name: string) =>
+  ipcMain.handle("wsl-servers-install-opencode", (_event: IpcMainInvokeEvent, name: string) =>
     deps.wslServersInstallOpencode(requireString("distro", name)),
   )
-  handle("wsl-servers-open-terminal", (_event: IpcMainInvokeEvent, name: string) =>
+  ipcMain.handle("wsl-servers-open-terminal", (_event: IpcMainInvokeEvent, name: string) =>
     deps.wslServersOpenTerminal(requireString("distro", name)),
   )
-  handle("wsl-servers-add", (_event: IpcMainInvokeEvent, distro: string) =>
+  ipcMain.handle("wsl-servers-add", (_event: IpcMainInvokeEvent, distro: string) =>
     deps.wslServersAddServer(requireString("distro", distro)),
   )
-  handle("wsl-servers-remove", (_event: IpcMainInvokeEvent, id: string) =>
+  ipcMain.handle("wsl-servers-remove", (_event: IpcMainInvokeEvent, id: string) =>
     deps.wslServersRemoveServer(requireString("server id", id)),
   )
-  handle("wsl-servers-start", (_event: IpcMainInvokeEvent, id: string) =>
+  ipcMain.handle("wsl-servers-start", (_event: IpcMainInvokeEvent, id: string) =>
     deps.wslServersStartServer(requireString("server id", id)),
   )
-  handle("get-window-config", () => deps.getWindowConfig())
-  handle("consume-initial-deep-links", () => deps.consumeInitialDeepLinks())
-  handle("get-default-server-url", () => deps.getDefaultServerUrl())
-  handle("set-default-server-url", (_event: IpcMainInvokeEvent, url: string | null) =>
+  ipcMain.handle("get-window-config", () => deps.getWindowConfig())
+  ipcMain.handle("consume-initial-deep-links", () => deps.consumeInitialDeepLinks())
+  ipcMain.handle("get-default-server-url", () => deps.getDefaultServerUrl())
+  ipcMain.handle("set-default-server-url", (_event: IpcMainInvokeEvent, url: string | null) =>
     deps.setDefaultServerUrl(url),
   )
-  handle("get-display-backend", () => deps.getDisplayBackend())
-  handle("set-display-backend", (_event: IpcMainInvokeEvent, backend: string | null) =>
+  ipcMain.handle("get-display-backend", () => deps.getDisplayBackend())
+  ipcMain.handle("set-display-backend", (_event: IpcMainInvokeEvent, backend: string | null) =>
     deps.setDisplayBackend(backend),
   )
-  handle("parse-markdown", (_event: IpcMainInvokeEvent, markdown: string) => deps.parseMarkdown(markdown))
-  handle("check-app-exists", (_event: IpcMainInvokeEvent, appName: string) => deps.checkAppExists(appName))
-  handle(
+  ipcMain.handle("parse-markdown", (_event: IpcMainInvokeEvent, markdown: string) => deps.parseMarkdown(markdown))
+  ipcMain.handle("check-app-exists", (_event: IpcMainInvokeEvent, appName: string) => deps.checkAppExists(appName))
+  ipcMain.handle(
     "wsl-path",
     (_event: IpcMainInvokeEvent, path: string, mode: "windows" | "linux" | null, distro?: string | null) =>
       deps.wslPath(path, mode, distro),
   )
-  handle("resolve-app-path", (_event: IpcMainInvokeEvent, appName: string) => deps.resolveAppPath(appName))
-  on("loading-window-complete", () => deps.loadingWindowComplete())
-  handle("run-updater", (_event: IpcMainInvokeEvent, alertOnFail: boolean) => deps.runUpdater(alertOnFail))
-  handle("check-update", () => deps.checkUpdate())
-  handle("install-update", () => deps.installUpdate())
-  handle("set-background-color", (_event: IpcMainInvokeEvent, color: string) => deps.setBackgroundColor(color))
-  handle("store-get", (_event: IpcMainInvokeEvent, name: string, key: string) => {
+  ipcMain.handle("resolve-app-path", (_event: IpcMainInvokeEvent, appName: string) => deps.resolveAppPath(appName))
+  ipcMain.on("loading-window-complete", () => deps.loadingWindowComplete())
+  ipcMain.handle("run-updater", (_event: IpcMainInvokeEvent, alertOnFail: boolean) => deps.runUpdater(alertOnFail))
+  ipcMain.handle("check-update", () => deps.checkUpdate())
+  ipcMain.handle("install-update", () => deps.installUpdate())
+  ipcMain.handle("set-background-color", (_event: IpcMainInvokeEvent, color: string) => deps.setBackgroundColor(color))
+  ipcMain.handle("store-get", (_event: IpcMainInvokeEvent, name: string, key: string) => {
     const store = getStore(name)
     const value = store.get(key)
     if (value === undefined || value === null) return null
     return typeof value === "string" ? value : JSON.stringify(value)
   })
-  handle("store-set", (_event: IpcMainInvokeEvent, name: string, key: string, value: string) => {
+  ipcMain.handle("store-set", (_event: IpcMainInvokeEvent, name: string, key: string, value: string) => {
     getStore(name).set(key, value)
   })
-  handle("store-delete", (_event: IpcMainInvokeEvent, name: string, key: string) => {
+  ipcMain.handle("store-delete", (_event: IpcMainInvokeEvent, name: string, key: string) => {
     getStore(name).delete(key)
   })
-  handle("store-clear", (_event: IpcMainInvokeEvent, name: string) => {
+  ipcMain.handle("store-clear", (_event: IpcMainInvokeEvent, name: string) => {
     getStore(name).clear()
   })
-  handle("store-keys", (_event: IpcMainInvokeEvent, name: string) => {
+  ipcMain.handle("store-keys", (_event: IpcMainInvokeEvent, name: string) => {
     const store = getStore(name)
     return Object.keys(store.store)
   })
-  handle("store-length", (_event: IpcMainInvokeEvent, name: string) => {
+  ipcMain.handle("store-length", (_event: IpcMainInvokeEvent, name: string) => {
     const store = getStore(name)
     return Object.keys(store.store).length
   })
 
-  handle(
+  ipcMain.handle(
     "open-directory-picker",
     async (_event: IpcMainInvokeEvent, opts?: { multiple?: boolean; title?: string; defaultPath?: string }) => {
       const result = await dialog.showOpenDialog({
@@ -216,7 +182,7 @@ export function registerIpcHandlers(deps: Deps) {
     },
   )
 
-  handle(
+  ipcMain.handle(
     "open-file-picker",
     async (
       _event: IpcMainInvokeEvent,
@@ -233,7 +199,7 @@ export function registerIpcHandlers(deps: Deps) {
     },
   )
 
-  handle(
+  ipcMain.handle(
     "save-file-picker",
     async (_event: IpcMainInvokeEvent, opts?: { title?: string; defaultPath?: string }) => {
       const result = await dialog.showSaveDialog({
@@ -245,11 +211,11 @@ export function registerIpcHandlers(deps: Deps) {
     },
   )
 
-  on("open-link", (_event: IpcMainEvent, url: string) => {
+  ipcMain.on("open-link", (_event: IpcMainEvent, url: string) => {
     void shell.openExternal(url)
   })
 
-  handle("open-path", async (_event: IpcMainInvokeEvent, path: string, app?: string) => {
+  ipcMain.handle("open-path", async (_event: IpcMainInvokeEvent, path: string, app?: string) => {
     if (!app) return shell.openPath(path)
     await new Promise<void>((resolve, reject) => {
       const [cmd, args] =
@@ -258,7 +224,7 @@ export function registerIpcHandlers(deps: Deps) {
     })
   })
 
-  handle("read-clipboard-image", () => {
+  ipcMain.handle("read-clipboard-image", () => {
     const image = clipboard.readImage()
     if (image.isEmpty()) return null
     const buffer = image.toPNG().buffer
@@ -266,34 +232,34 @@ export function registerIpcHandlers(deps: Deps) {
     return { buffer, width: size.width, height: size.height }
   })
 
-  on("show-notification", (_event: IpcMainEvent, title: string, body?: string) => {
+  ipcMain.on("show-notification", (_event: IpcMainEvent, title: string, body?: string) => {
     new Notification({ title, body }).show()
   })
 
-  handle("get-window-count", () => BrowserWindow.getAllWindows().length)
+  ipcMain.handle("get-window-count", () => BrowserWindow.getAllWindows().length)
 
-  handle("get-window-focused", (event: IpcMainInvokeEvent) => {
+  ipcMain.handle("get-window-focused", (event: IpcMainInvokeEvent) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     return win?.isFocused() ?? false
   })
 
-  handle("set-window-focus", (event: IpcMainInvokeEvent) => {
+  ipcMain.handle("set-window-focus", (event: IpcMainInvokeEvent) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     win?.focus()
   })
 
-  handle("show-window", (event: IpcMainInvokeEvent) => {
+  ipcMain.handle("show-window", (event: IpcMainInvokeEvent) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     win?.show()
   })
 
-  on("relaunch", () => {
+  ipcMain.on("relaunch", () => {
     deps.relaunch()
   })
 
-  handle("get-zoom-factor", (event: IpcMainInvokeEvent) => event.sender.getZoomFactor())
-  handle("set-zoom-factor", (event: IpcMainInvokeEvent, factor: number) => event.sender.setZoomFactor(factor))
-  handle("set-titlebar", (event: IpcMainInvokeEvent, theme: TitlebarTheme) => {
+  ipcMain.handle("get-zoom-factor", (event: IpcMainInvokeEvent) => event.sender.getZoomFactor())
+  ipcMain.handle("set-zoom-factor", (event: IpcMainInvokeEvent, factor: number) => event.sender.setZoomFactor(factor))
+  ipcMain.handle("set-titlebar", (event: IpcMainInvokeEvent, theme: TitlebarTheme) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win) return
     setTitlebar(win, theme)
