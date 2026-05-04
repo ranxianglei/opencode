@@ -20,29 +20,6 @@ import { type ServerHealth, useCheckServerHealth } from "@/utils/server-health"
 
 const DEFAULT_USERNAME = "opencode"
 
-function versionOlderThan(current: string | null | undefined, expected: string | null | undefined) {
-  if (!current || !expected) return false
-
-  const parse = (value: string) => {
-    const match = value.match(/v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/)
-    if (!match) return
-    return {
-      major: Number(match[1]),
-      minor: Number(match[2]),
-      patch: Number(match[3]),
-      prerelease: match[4] ?? null,
-    }
-  }
-
-  const left = parse(current)
-  const right = parse(expected)
-  if (!left || !right) return false
-  if (left.major !== right.major) return left.major < right.major
-  if (left.minor !== right.minor) return left.minor < right.minor
-  if (left.patch !== right.patch) return left.patch < right.patch
-  return !!left.prerelease && !right.prerelease
-}
-
 interface DialogSelectServerProps {
   onNavigateHome?: () => void
 }
@@ -632,15 +609,11 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
               const blocked = () => health(key)?.healthy === false
               const canChangeDefault = () => defaultServer.canDefault() && i.type !== "ssh"
               const canRemove = () => i.type === "http" || wsl
-              const outdated = () => {
-                const check = wslCheck(i)
-                return versionOlderThan(check?.version, check?.expectedVersion)
-              }
               const opencodeAction = () => {
                 const check = wslCheck(i)
                 if (!check) return null
                 if (!check.resolvedPath) return "Install OpenCode"
-                if (outdated()) return "Update OpenCode"
+                if (check.matchesDesktop === false) return "Update OpenCode"
                 return null
               }
               const updating = () => {
