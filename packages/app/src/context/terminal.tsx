@@ -3,7 +3,6 @@ import { createSimpleContext } from "@opencode-ai/ui/context"
 import { batch, createEffect, createMemo, createRoot, on, onCleanup } from "solid-js"
 import { useParams } from "@solidjs/router"
 import { useSDK } from "./sdk"
-import { useServer } from "./server"
 import type { Platform } from "./platform"
 import { defaultTitle, titleNumber } from "./terminal-title"
 import { Persist, persisted, removePersisted } from "@/utils/persist"
@@ -21,11 +20,6 @@ export type LocalPTY = {
 
 const WORKSPACE_KEY = "__workspace__"
 const MAX_TERMINAL_SESSIONS = 20
-
-const debugTerminal = (phase: string, input: Record<string, unknown>) => {
-  if (!import.meta.env.DEV) return
-  console.log(`[terminal context] ${JSON.stringify({ phase, ...input })}`)
-}
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -117,11 +111,10 @@ const trimTerminal = (pty: LocalPTY) => {
 }
 
 export function clearWorkspaceTerminals(dir: string, sessionIDs?: string[], platform?: Platform) {
+  const key = getWorkspaceTerminalCacheKey(dir)
   for (const cache of caches) {
-    for (const [key, entry] of cache.entries()) {
-      if (!key.startsWith(`${dir}:`) || !key.endsWith(`:${WORKSPACE_KEY}`)) continue
-      entry.value.clear()
-    }
+    const entry = cache.get(key)
+    entry?.value.clear()
   }
 
   void removePersisted(Persist.workspace(dir, "terminal"), platform)
@@ -137,25 +130,14 @@ export function clearWorkspaceTerminals(dir: string, sessionIDs?: string[], plat
   }
 }
 
-function createWorkspaceTerminalSession(
-  sdk: ReturnType<typeof useSDK>,
-  dir: string,
-  serverKey: string,
-  legacySessionID?: string,
-) {
+function createWorkspaceTerminalSession(sdk: ReturnType<typeof useSDK>, dir: string, legacySessionID?: string) {
   const legacy = getLegacyTerminalStorageKeys(dir, legacySessionID)
-  const target = {
-    ...Persist.workspace(dir, `${serverKey}:terminal`, legacy),
-    migrate: migrateTerminalState,
-  }
 
-  // Scope persisted terminal state by server so switching servers behaves
-  // like switching projects: a fresh session for the new server+dir pair,
-  // while the other server's state stays intact until you swap back. PTY
-  // ids, scrollback, and WebSocket connections are all server-scoped, so
-  // cross-server persistence was showing stale output on swap.
   const [store, setStore, _, ready] = persisted(
-    target,
+    {
+      ...Persist.workspace(dir, "terminal", legacy),
+      migrate: migrateTerminalState,
+    },
     createStore<{
       active?: string
       all: LocalPTY[]
@@ -163,14 +145,6 @@ function createWorkspaceTerminalSession(
       all: [],
     }),
   )
-
-  debugTerminal("session.create", {
-    dir,
-    serverKey,
-    storage: target.storage,
-    key: target.key,
-    legacySessionID: legacySessionID ?? null,
-  })
 
   const pickNextTerminalNumber = () => {
     const existingTitleNumbers = new Set(
@@ -212,16 +186,6 @@ function createWorkspaceTerminalSession(
   onCleanup(unsub)
 
   const update = (client: ReturnType<typeof useSDK>["client"], pty: Partial<LocalPTY> & { id: string }) => {
-    debugTerminal("session.update", {
-      dir,
-      serverKey,
-      id: pty.id,
-      title: pty.title ?? null,
-      hasBuffer: typeof pty.buffer === "string",
-      bufferLength: typeof pty.buffer === "string" ? pty.buffer.length : 0,
-      cursor: pty.cursor ?? null,
-      scrollY: pty.scrollY ?? null,
-    })
     const index = store.all.findIndex((x) => x.id === pty.id)
     const previous = index >= 0 ? store.all[index] : undefined
     if (index >= 0) {
@@ -238,18 +202,11 @@ function createWorkspaceTerminalSession(
           const currentIndex = store.all.findIndex((item) => item.id === pty.id)
           if (currentIndex >= 0) setStore("all", currentIndex, previous)
         }
-        console.error(
-          `Failed to update terminal ${JSON.stringify({
-            ptyID: pty.id,
-            title: pty.title,
-            error: error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : error,
-          })}`,
-        )
+        console.error("Failed to update terminal", error)
       })
   }
 
   const clone = async (client: ReturnType<typeof useSDK>["client"], id: string) => {
-    debugTerminal("session.clone.start", { dir, serverKey, id })
     const index = store.all.findIndex((x) => x.id === id)
     const pty = store.all[index]
     if (!pty) return
@@ -262,14 +219,6 @@ function createWorkspaceTerminalSession(
         return undefined
       })
     if (!next?.data) return
-
-    debugTerminal("session.clone.done", {
-      dir,
-      serverKey,
-      id,
-      nextID: next.data.id ?? null,
-      title: next.data.title ?? pty.title,
-    })
 
     const active = store.active === pty.id
 
@@ -303,19 +252,11 @@ function createWorkspaceTerminalSession(
     new() {
       const nextNumber = pickNextTerminalNumber()
 
-      debugTerminal("session.new", { dir, serverKey, nextNumber })
-
       sdk.client.pty
         .create({ title: defaultTitle(nextNumber) })
         .then((pty: { data?: { id?: string; title?: string } }) => {
           const id = pty.data?.id
           if (!id) return
-          debugTerminal("session.new.done", {
-            dir,
-            serverKey,
-            id,
-            title: pty.data?.title ?? defaultTitle(nextNumber),
-          })
           const newTerminal = {
             id,
             title: pty.data?.title ?? defaultTitle(nextNumber),
@@ -348,12 +289,6 @@ function createWorkspaceTerminalSession(
     },
     bind() {
       const client = sdk.client
-      debugTerminal("session.bind", {
-        dir,
-        serverKey,
-        active: store.active ?? null,
-        all: store.all.map((item) => item.id),
-      })
       return {
         trim(id: string) {
           const index = store.all.findIndex((x) => x.id === id)
@@ -422,7 +357,6 @@ export const { use: useTerminal, provider: TerminalProvider } = createSimpleCont
   gate: false,
   init: () => {
     const sdk = useSDK()
-    const server = useServer()
     const params = useParams()
     const cache = new Map<string, TerminalCacheEntry>()
 
@@ -430,9 +364,10 @@ export const { use: useTerminal, provider: TerminalProvider } = createSimpleCont
     onCleanup(() => caches.delete(cache))
 
     const disposeAll = () => {
-      const pending = Array.from(cache.values(), (entry) => entry.dispose)
+      for (const entry of cache.values()) {
+        entry.dispose()
+      }
       cache.clear()
-      for (const dispose of pending) dispose()
     }
 
     onCleanup(disposeAll)
@@ -447,30 +382,18 @@ export const { use: useTerminal, provider: TerminalProvider } = createSimpleCont
       }
     }
 
-    const loadWorkspace = (dir: string, serverKey: string, legacySessionID?: string) => {
+    const loadWorkspace = (dir: string, legacySessionID?: string) => {
+      // Terminals are workspace-scoped so tabs persist while switching sessions in the same directory.
       const key = getWorkspaceTerminalCacheKey(dir)
       const existing = cache.get(key)
       if (existing) {
-        debugTerminal("workspace.cache.hit", {
-          dir,
-          serverKey,
-          key,
-          legacySessionID: legacySessionID ?? null,
-        })
         cache.delete(key)
         cache.set(key, existing)
         return existing.value
       }
 
-      debugTerminal("workspace.cache.miss", {
-        dir,
-        serverKey,
-        key,
-        legacySessionID: legacySessionID ?? null,
-      })
-
       const entry = createRoot((dispose) => ({
-        value: createWorkspaceTerminalSession(sdk, dir, serverKey, legacySessionID),
+        value: createWorkspaceTerminalSession(sdk, dir, legacySessionID),
         dispose,
       }))
 
@@ -479,21 +402,16 @@ export const { use: useTerminal, provider: TerminalProvider } = createSimpleCont
       return entry.value
     }
 
-    const workspace = createMemo(() => {
-      const key = server.key
-      if (!key) return loadWorkspace(params.dir!, "", params.id)
-      return loadWorkspace(params.dir!, key, params.id)
-    })
+    const workspace = createMemo(() => loadWorkspace(params.dir!, params.id))
 
     createEffect(
       on(
         () => ({ dir: params.dir, id: params.id }),
         (next, prev) => {
-          const prevKey = server.key
-          if (!prev?.dir || !prevKey) return
+          if (!prev?.dir) return
           if (next.dir === prev.dir && next.id === prev.id) return
           if (next.dir === prev.dir && next.id) return
-          loadWorkspace(prev.dir, prevKey, prev.id).trimAll()
+          loadWorkspace(prev.dir, prev.id).trimAll()
         },
         { defer: true },
       ),
@@ -508,7 +426,7 @@ export const { use: useTerminal, provider: TerminalProvider } = createSimpleCont
       trim: (id: string) => workspace().trim(id),
       trimAll: () => workspace().trimAll(),
       clone: (id: string) => workspace().clone(id),
-      bind: () => workspace().bind(),
+      bind: () => workspace(),
       open: (id: string) => workspace().open(id),
       close: (id: string) => workspace().close(id),
       move: (id: string, to: number) => workspace().move(id, to),

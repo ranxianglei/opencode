@@ -1,57 +1,5 @@
 // @refresh reload
 
-// V8's default Error.stackTraceLimit truncates at 10 frames; raise it so
-// reported errors come with a useful frame budget.
-Error.stackTraceLimit = 200
-
-// Install global error listeners before any other module runs so that
-// uncaught errors and rejected promises reach the main process with their
-// full stacks intact. Electron's `console-message` event only forwards the
-// rethrow site, so without these we lose the originating frame.
-window.addEventListener("error", (event) => {
-  const err = event.error
-  const stack = err instanceof Error ? err.stack : null
-  console.error(
-    "[renderer uncaught]",
-    stack ?? event.message,
-    stack ? "" : `${event.filename}:${event.lineno}:${event.colno}`,
-  )
-})
-
-window.addEventListener("unhandledrejection", (event) => {
-  const reason = event.reason
-  // Log as much as possible: stack for Errors, JSON for plain objects with
-  // a fallback to a tagged shape so we never end up with just
-  // "[object Object]" in main.log.
-  if (reason instanceof Error) {
-    console.error("[renderer unhandled rejection]", reason.stack ?? reason.message ?? String(reason))
-    return
-  }
-  let serialized: string
-  try {
-    serialized = JSON.stringify(
-      reason,
-      (_key, value) => {
-        if (value instanceof Error) {
-          return { __error: true, name: value.name, message: value.message, stack: value.stack }
-        }
-        return value
-      },
-      2,
-    )
-  } catch {
-    serialized = String(reason)
-  }
-  console.error(
-    "[renderer unhandled rejection]",
-    `type=${typeof reason}`,
-    `ctor=${reason?.constructor?.name ?? "null"}`,
-    `keys=${reason && typeof reason === "object" ? Object.keys(reason).join(",") : "n/a"}`,
-    "value:",
-    serialized,
-  )
-})
-
 import {
   ACCEPTED_FILE_EXTENSIONS,
   ACCEPTED_FILE_TYPES,
@@ -76,7 +24,6 @@ import pkg from "../../package.json"
 import { initI18n, t } from "./i18n"
 import { webviewZoom } from "./webview-zoom"
 import "./styles.css"
-import { Button } from "@opencode-ai/ui/button"
 import { Splash } from "@opencode-ai/ui/logo"
 import { useTheme } from "@opencode-ai/ui/theme"
 
@@ -119,21 +66,6 @@ const emitDeepLinks = (urls: string[]) => {
 const listenForDeepLinks = () => {
   void window.api.consumeInitialDeepLinks().then((urls) => emitDeepLinks(urls))
   return window.api.onDeepLink((urls) => emitDeepLinks(urls))
-}
-
-function LocalServerStartupError(props: { message: string }) {
-  return (
-    <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base gap-6 p-6">
-      <div class="flex flex-col items-center max-w-md text-center">
-        <Splash class="w-12 h-15 mb-4" />
-        <p class="text-16-medium text-text-strong">Local Server failed to start</p>
-        <p class="mt-2 text-12-regular text-text-weak whitespace-pre-wrap break-words">{props.message}</p>
-        <Button variant="secondary" size="large" class="mt-4" onClick={() => window.api.relaunch()}>
-          Relaunch
-        </Button>
-      </div>
-    </div>
-  )
 }
 
 const createPlatform = (): Platform => {
@@ -351,19 +283,7 @@ render(() => {
 
   const [windowCount] = createResource(() => window.api.getWindowCount())
 
-  const [startup] = createResource(async () => {
-    try {
-      return {
-        error: null,
-        sidecar: await window.api.awaitInitialization(() => undefined),
-      }
-    } catch (error) {
-      return {
-        error: error instanceof Error ? error.message : String(error),
-        sidecar: null,
-      }
-    }
-  })
+  const [sidecar] = createResource(() => window.api.awaitInitialization(() => undefined))
 
   const [defaultServer] = createResource(() => platform.getDefaultServer?.())
   const [locale] = createResource(loadLocale)
@@ -405,12 +325,12 @@ render(() => {
     const ready = createMemo(
       () =>
         !defaultServer.loading &&
-        !startup.loading &&
+        !sidecar.loading &&
         !windowCount.loading &&
         !locale.loading,
     )
     const servers = createMemo(() => {
-      const data = startup.latest?.sidecar
+      const data = sidecar()
       const list: ServerConnection.Any[] = []
       if (data) {
         list.push({
@@ -442,14 +362,10 @@ render(() => {
       return list
     })
     if (!ready()) return splash
-    if (startup.latest?.error) {
-      return <LocalServerStartupError message={startup.latest.error} />
-    }
 
     return (
       <AppInterface
-        defaultServer={defaultServer.latest ?? ServerConnection.Key.make("local:windows")}
-        serversReady={!platform.wslServers || !wslServers.isPending}
+        defaultServer={defaultServer.latest ?? ServerConnection.Key.make("sidecar")}
         servers={servers()}
         router={MemoryRouter}
       >

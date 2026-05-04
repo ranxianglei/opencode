@@ -89,21 +89,10 @@ export function createScopedCache<T>(createValue: (key: string) => T, options: S
   }
 
   const clear = () => {
-    // Defer dispose() calls to a microtask. When clear() runs inside an
-    // onCleanup during a parent remount (e.g. context/file.tsx and
-    // context/comments.tsx both do this), synchronous dispose on cached
-    // createRoot entries starts a nested cleanNode cascade while the outer
-    // cascade is mid-traversal, corrupting solid-js's graph walk state and
-    // throwing `Cannot read properties of null (reading '1')` at
-    // chunk-*.js:992. Deferring lets the outer cleanup finish first.
-    const pending: Array<[string, Entry<T>]> = []
-    for (const entry of store) pending.push(entry)
-    store.clear()
-    if (pending.length && options.dispose) {
-      queueMicrotask(() => {
-        for (const [key, entry] of pending) dispose(key, entry)
-      })
+    for (const [key, entry] of store) {
+      dispose(key, entry)
     }
+    store.clear()
   }
 
   return {

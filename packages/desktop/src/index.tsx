@@ -71,21 +71,16 @@ const createPlatform = (): Platform => {
   })()
 
   const wslHome = async () => {
-    if (os !== "windows") return undefined
-    const wsl = await commands.getWslConfig().catch(() => null)
-    if (!wsl?.enabled) return undefined
+    if (os !== "windows" || !window.__OPENCODE__?.wsl) return undefined
     return commands.wslPath("~", "windows").catch(() => undefined)
   }
 
-  const handleWslPicker = async <T extends string | string[] | null>(result: T): Promise<T> => {
-    if (!result) return result
-    const wsl = await commands.getWslConfig().catch(() => null)
-    if (!wsl?.enabled) return result
-    const convert = (path: string) => commands.wslPath(path, "linux").catch(() => path)
+  const handleWslPicker = async <T extends string | string[]>(result: T | null): Promise<T | null> => {
+    if (!result || !window.__OPENCODE__?.wsl) return result
     if (Array.isArray(result)) {
-      return (await Promise.all(result.map(convert))) as T
+      return Promise.all(result.map((path) => commands.wslPath(path, "linux").catch(() => path))) as any
     }
-    return (await convert(result)) as T
+    return commands.wslPath(result, "linux").catch(() => result) as any
   }
 
   return {
@@ -354,6 +349,16 @@ const createPlatform = (): Platform => {
       }
     },
 
+    getWslEnabled: async () => {
+      const next = await commands.getWslConfig().catch(() => null)
+      if (next) return next.enabled
+      return window.__OPENCODE__!.wsl ?? false
+    },
+
+    setWslEnabled: async (enabled) => {
+      await commands.setWslConfig({ enabled })
+    },
+
     getDefaultServer: async () => {
       const url = await commands.getDefaultServerUrl().catch(() => null)
       if (!url) return null
@@ -433,7 +438,11 @@ render(() => {
   // Fetch sidecar credentials from Rust (available immediately, before health check)
   const [sidecar] = createResource(() => commands.awaitInitialization(new Channel<InitStep>() as any))
 
-  const [defaultServer] = createResource(() => platform.getDefaultServer?.())
+  const [defaultServer] = createResource(() =>
+    platform.getDefaultServer?.().then((url) => {
+      if (url) return ServerConnection.key({ type: "http", http: { url } })
+    }),
+  )
   const [locale] = createResource(loadLocale)
 
   // Build the sidecar server connection once credentials arrive
@@ -482,7 +491,7 @@ render(() => {
           {(_) => {
             return (
               <AppInterface
-                defaultServer={defaultServer.latest ?? ServerConnection.Key.make("local:windows")}
+                defaultServer={defaultServer.latest ?? ServerConnection.Key.make("sidecar")}
                 servers={servers()}
               >
                 <Inner />

@@ -232,13 +232,10 @@ export const { use: usePrompt, provider: PromptProvider } = createSimpleContext(
     const cache = new Map<string, PromptCacheEntry>()
 
     const disposeAll = () => {
-      // Defer the dispose calls to a microtask; synchronous nested dispose
-      // inside a parent onCleanup corrupts solid-js's in-flight cleanNode
-      // traversal during mass remounts (see context/terminal.tsx for the
-      // same pattern).
-      const pending = Array.from(cache.values(), (entry) => entry.dispose)
+      for (const entry of cache.values()) {
+        entry.dispose()
+      }
       cache.clear()
-      if (pending.length) queueMicrotask(() => pending.forEach((d) => d()))
     }
 
     onCleanup(disposeAll)

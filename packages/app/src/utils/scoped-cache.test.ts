@@ -24,7 +24,7 @@ describe("createScopedCache", () => {
     expect(disposed).toEqual(["b"])
   })
 
-  test("disposes entries on delete and clear", async () => {
+  test("disposes entries on delete and clear", () => {
     const disposed: string[] = []
     const cache = createScopedCache((key) => ({ key }), {
       dispose: (value) => disposed.push(value.key),
@@ -39,9 +39,6 @@ describe("createScopedCache", () => {
 
     cache.clear()
     expect(cache.peek("b")).toBeUndefined()
-    // clear() defers dispose to a microtask to avoid nested cleanNode cascades
-    // when called from inside an onCleanup; flush the queue before asserting.
-    await Promise.resolve()
     expect(disposed).toEqual(["a", "b"])
   })
 

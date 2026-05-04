@@ -112,15 +112,8 @@ export function createChildStoreManager(input: {
     lifecycle.delete(key)
     const dispose = disposers.get(key)
     if (dispose) {
+      dispose()
       disposers.delete(key)
-      // Defer the actual solid-js root disposal. When disposeDirectory runs
-      // from pinForOwner's onCleanup during a parent remount, calling
-      // dispose() here triggers a nested cleanNode cascade on the inner
-      // root while the outer cascade is mid-traversal, which corrupts
-      // solid-js's graph walk state and throws `Cannot read properties of
-      // null (reading '1')` at chunk-*.js:992. Running dispose on a
-      // microtask lets the outer cleanup finish first.
-      queueMicrotask(dispose)
     }
     delete children[key]
     input.onDispose(key)

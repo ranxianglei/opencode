@@ -95,15 +95,6 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
       buffer.length = 0
     }
 
-    const clearPending = () => {
-      if (timer) clearTimeout(timer)
-      timer = undefined
-      queue.length = 0
-      buffer.length = 0
-      coalesced.clear()
-      staleDeltas.clear()
-    }
-
     const schedule = () => {
       if (timer) return
       const elapsed = Date.now() - last
@@ -211,10 +202,6 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
         }
       })().finally(() => {
         run = undefined
-        if (abort.signal.aborted || !started) {
-          clearPending()
-          return
-        }
         flush()
       })
       return run
@@ -238,7 +225,7 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
     onCleanup(() => {
       stop()
       abort.abort()
-      clearPending()
+      flush()
     })
 
     const sdk = createSdkForServer({
@@ -248,9 +235,7 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
     })
 
     return {
-      get url() {
-        return server.current?.http.url ?? currentServer.http.url
-      },
+      url: currentServer.http.url,
       client: sdk,
       event: {
         on: emitter.on.bind(emitter),

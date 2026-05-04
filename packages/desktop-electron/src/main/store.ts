@@ -4,12 +4,10 @@ import { SETTINGS_STORE } from "./constants"
 
 const cache = new Map<string, Store>()
 
-// IMPORTANT: do NOT construct Store at module import time. electron-store
-// resolves `app.getPath("userData")` in its constructor, but our index.ts
-// only calls `app.setName` / `app.setPath("userData", ...)` AFTER module
-// imports finish. Constructing eagerly wrote settings (e.g. the WSL server
-// config) to the default `%APPDATA%\@opencode-ai\desktop-electron` folder
-// instead of the proper `...desktop.dev` / channel dir.
+// We cannot instantiate the electron-store at module load time because
+// module import hoisting causes this to run before app.setPath("userData", ...)
+// in index.ts has executed, which would result in files being written to the default directory
+// (e.g. bad: %APPDATA%\@opencode-ai\desktop-electron\opencode.settings vs good: %APPDATA%\ai.opencode.desktop.dev\opencode.settings).
 export function getStore(name = SETTINGS_STORE) {
   const cached = cache.get(name)
   if (cached) return cached

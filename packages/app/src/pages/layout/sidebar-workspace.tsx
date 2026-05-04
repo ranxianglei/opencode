@@ -55,17 +55,6 @@ export type WorkspaceSidebarContext = {
   setScrollContainerRef: (el: HTMLDivElement | undefined, mobile?: boolean) => void
 }
 
-const WORKSPACE_SORTABLE_PREFIX = "workspace:"
-
-export function workspaceSortableId(directory: string) {
-  return `${WORKSPACE_SORTABLE_PREFIX}${directory}`
-}
-
-export function workspaceSortableDirectory(id: string | undefined) {
-  if (!id?.startsWith(WORKSPACE_SORTABLE_PREFIX)) return
-  return id.slice(WORKSPACE_SORTABLE_PREFIX.length)
-}
-
 export const WorkspaceDragOverlay = (props: {
   sidebarProject: Accessor<LocalProject | undefined>
   activeWorkspace: Accessor<string | undefined>
@@ -312,7 +301,7 @@ export const SortableWorkspace = (props: {
   const params = useParams()
   const globalSync = useGlobalSync()
   const language = useLanguage()
-  const sortable = createSortable(workspaceSortableId(props.directory))
+  const sortable = createSortable(props.directory)
   const [workspaceStore, setWorkspaceStore] = globalSync.child(props.directory, { bootstrap: false })
   const [menu, setMenu] = createStore({
     open: false,
@@ -325,9 +314,7 @@ export const SortableWorkspace = (props: {
   const workspaceValue = createMemo(() => {
     const branch = workspaceStore.vcs?.branch
     const name = branch ?? getFilename(props.directory)
-    const projectId = props.project.id
-    if (!projectId) return name
-    return props.ctx.workspaceName(props.directory, projectId, branch) ?? name
+    return props.ctx.workspaceName(props.directory, props.project.id, branch) ?? name
   })
   const open = createMemo(() => props.ctx.workspaceExpanded(props.directory, local()))
   const boot = createMemo(() => open() || active())
@@ -357,7 +344,7 @@ export const SortableWorkspace = (props: {
       InlineEditor={props.ctx.InlineEditor}
       renameWorkspace={props.ctx.renameWorkspace}
       setEditor={props.ctx.setEditor}
-      projectId={props.project.id ?? ""}
+      projectId={props.project.id}
     />
   )
 
@@ -460,21 +447,19 @@ export const LocalWorkspace = (props: {
 }): JSX.Element => {
   const globalSync = useGlobalSync()
   const language = useLanguage()
-  const worktree = createMemo(() => props.project.worktree)
   const workspace = createMemo(() => {
-    const [store, setStore] = globalSync.child(worktree())
+    const [store, setStore] = globalSync.child(props.project.worktree)
     return { store, setStore }
   })
-  const slug = createMemo(() => base64Encode(worktree()))
+  const slug = createMemo(() => base64Encode(props.project.worktree))
   const sessions = createMemo(() => sortedRootSessions(workspace().store, props.sortNow()))
   const count = createMemo(() => sessions()?.length ?? 0)
-  const query = useQuery(() => ({ ...loadSessionsQuery(worktree()) }))
-  const loading = createMemo(() => query.isPending && count() === 0)
+  const query = useQuery(() => ({ ...loadSessionsQuery(props.project.worktree) }))
   const hasMore = createMemo(() => workspace().store.sessionTotal > count())
+  const loading = () => query.isLoading && count() === 0
   const loadMore = async () => {
-    const dir = worktree()
     workspace().setStore("limit", (limit) => (limit ?? 0) + 5)
-    await globalSync.project.loadSessions(dir)
+    await globalSync.project.loadSessions(props.project.worktree)
   }
 
   return (

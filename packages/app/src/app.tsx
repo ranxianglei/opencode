@@ -1,8 +1,6 @@
 import "@/index.css"
-import { Button } from "@opencode-ai/ui/button"
 import * as Sentry from "@sentry/solid"
 import { I18nProvider } from "@opencode-ai/ui/context"
-import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { DialogProvider } from "@opencode-ai/ui/context/dialog"
 import { FileComponentProvider } from "@opencode-ai/ui/context/file"
 import { MarkedProvider } from "@opencode-ai/ui/context/marked"
@@ -13,9 +11,12 @@ import { ThemeProvider } from "@opencode-ai/ui/theme/context"
 import { MetaProvider } from "@solidjs/meta"
 import { type BaseRouterProps, Navigate, Route, Router } from "@solidjs/router"
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query"
+import { Effect } from "effect"
 import {
   type Component,
   createMemo,
+  createResource,
+  createSignal,
   ErrorBoundary,
   For,
   type JSX,
@@ -23,7 +24,6 @@ import {
   onCleanup,
   type ParentProps,
   Show,
-  startTransition,
   Suspense,
 } from "solid-js"
 import { Dynamic } from "solid-js/web"
@@ -38,7 +38,6 @@ import { LayoutProvider } from "@/context/layout"
 import { ModelsProvider } from "@/context/models"
 import { NotificationProvider } from "@/context/notification"
 import { PermissionProvider } from "@/context/permission"
-import { usePlatform } from "@/context/platform"
 import { PromptProvider } from "@/context/prompt"
 import { ServerConnection, ServerProvider, serverName, useServer } from "@/context/server"
 import { SettingsProvider } from "@/context/settings"
@@ -47,6 +46,7 @@ import { WslServersProvider } from "@/context/wsl-servers"
 import DirectoryLayout from "@/pages/directory-layout"
 import Layout from "@/pages/layout"
 import { ErrorPage } from "./pages/error"
+import { useCheckServerHealth } from "./utils/server-health"
 
 const HomeRoute = lazy(() => import("@/pages/home"))
 const loadSession = () => import("@/pages/session")
@@ -75,6 +75,7 @@ declare global {
     __OPENCODE__?: {
       updaterEnabled?: boolean
       deepLinks?: string[]
+      wsl?: boolean
       activeServer?: string
     }
     api?: {
@@ -175,48 +176,80 @@ export function AppBaseProviders(props: ParentProps<{ locale?: Locale }>) {
 
 function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean }>) {
   const server = useServer()
-  const healthy = createMemo(() => props.disableHealthCheck || server.healthy())
+  const checkServerHealth = useCheckServerHealth()
 
-  const splash = (
-    <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base">
-      <Splash class="w-16 h-20 opacity-50 animate-pulse" />
-    </div>
+  const [checkMode, setCheckMode] = createSignal<"blocking" | "background">("blocking")
+
+  // performs repeated health check with a grace period for
+  // non-http connections, otherwise fails instantly
+  const [startupHealthCheck, healthCheckActions] = createResource(() =>
+    props.disableHealthCheck
+      ? true
+      : Effect.gen(function* () {
+          if (!server.current) return true
+          const { http, type } = server.current
+
+          while (true) {
+            const res = yield* Effect.promise(() => checkServerHealth(http))
+            if (res.healthy) return true
+            if (checkMode() === "background" || type === "http") return false
+          }
+        }).pipe(
+          Effect.timeoutOrElse({ duration: "10 seconds", orElse: () => Effect.succeed(false) }),
+          Effect.ensuring(Effect.sync(() => setCheckMode("background"))),
+          Effect.runPromise,
+        ),
   )
 
   return (
-    <Show when={server.ready()} fallback={splash}>
-      <Suspense fallback={splash}>
-        <Show when={healthy() !== undefined} fallback={splash}>
-          <Show
-            when={healthy()}
-            fallback={
-              <ConnectionError
-                onServerSelected={(key) => {
-                  startTransition(() => {
-                    server.setActive(key)
-                  })
-                }}
-              />
-            }
-          >
-            {props.children}
-          </Show>
-        </Show>
-      </Suspense>
-    </Show>
+    <Suspense
+      fallback={
+        <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base">
+          <Splash class="w-16 h-20 opacity-50 animate-pulse" />
+        </div>
+      }
+    >
+      {/*<Show
+        when={checkMode() === "blocking" ? !startupHealthCheck.loading : startupHealthCheck.state !== "pending"}
+        fallback={
+          <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base">
+            <Splash class="w-16 h-20 opacity-50 animate-pulse" />
+          </div>
+        }
+      >*/}
+      {checkMode() === "blocking" ? startupHealthCheck() : startupHealthCheck.latest}
+      <Show
+        when={startupHealthCheck()}
+        fallback={
+          <ConnectionError
+            onRetry={() => {
+              if (checkMode() === "background") void healthCheckActions.refetch()
+            }}
+            onServerSelected={(key) => {
+              setCheckMode("blocking")
+              server.setActive(key)
+              void healthCheckActions.refetch()
+            }}
+          />
+        }
+      >
+        {props.children}
+      </Show>
+      {/*</Show>*/}
+    </Suspense>
   )
 }
 
-function ConnectionError(props: { onServerSelected?: (key: ServerConnection.Key) => void }) {
-  const dialog = useDialog()
+function ConnectionError(props: { onRetry?: () => void; onServerSelected?: (key: ServerConnection.Key) => void }) {
   const language = useLanguage()
-  const platform = usePlatform()
   const server = useServer()
   const others = () => server.list.filter((s) => ServerConnection.key(s) !== server.key)
   const name = createMemo(() => server.name || server.key)
   const serverToken = "\u0000server\u0000"
   const unreachable = createMemo(() => language.t("app.server.unreachable", { server: serverToken }).split(serverToken))
-  const canManage = createMemo(() => server.current?.type === "sidecar" && server.current?.variant === "wsl")
+
+  const timer = setInterval(() => props.onRetry?.(), 1000)
+  onCleanup(() => clearInterval(timer))
 
   return (
     <div class="h-dvh w-screen flex flex-col items-center justify-center bg-background-base gap-6 p-6">
@@ -228,34 +261,6 @@ function ConnectionError(props: { onServerSelected?: (key: ServerConnection.Key)
           {unreachable()[1]}
         </p>
         <p class="mt-1 text-12-regular text-text-weak">{language.t("app.server.retrying")}</p>
-        <Show when={canManage() && !!platform.wslServers}>
-          <Button
-            variant="secondary"
-            size="large"
-            class="mt-4"
-            onClick={() => {
-              void import("@/components/dialog-select-server")
-                .then((x) => {
-                  dialog.show(() => (
-                    <x.DialogSelectServer
-                      onNavigateHome={() => {
-                        // We're above the Router here so useNavigate() isn't available.
-                        // Update the browser URL directly; after server.setActive fires
-                        // ServerKey remounts the Router which picks up "/" on init.
-                        // Harmless under MemoryRouter (Electron), which restarts at "/".
-                        if (typeof window !== "undefined" && window.history?.replaceState) {
-                          window.history.replaceState(null, "", "/")
-                        }
-                      }}
-                    />
-                  ))
-                })
-                .catch((err) => console.error("Failed to load server dialog", err))
-            }}
-          >
-            Manage servers
-          </Button>
-        </Show>
       </div>
       <Show when={others().length > 0}>
         <div class="flex flex-col gap-2 w-full max-w-sm">
@@ -295,21 +300,13 @@ export function AppInterface(props: {
   children?: JSX.Element
   defaultServer: ServerConnection.Key
   servers?: Array<ServerConnection.Any>
-  serversReady?: boolean
   router?: Component<BaseRouterProps>
   disableHealthCheck?: boolean
 }) {
-  // ServerKey wraps the whole Router so that switching `server.key` throws
-  // away any session / pty state from the previous server. Preserving the
-  // route across servers doesn't work because session ids, pty ids, and
-  // most URL-addressable resources are server-scoped — you'd 404 on every
-  // fetch. The click handler that swaps servers also navigates back to "/"
-  // so the fresh MemoryRouter doesn't try to re-resolve a now-dead URL.
   return (
     <ServerProvider
       defaultServer={props.defaultServer}
       disableHealthCheck={props.disableHealthCheck}
-      serversReady={props.serversReady}
       servers={props.servers}
     >
       <ConnectionGate disableHealthCheck={props.disableHealthCheck}>

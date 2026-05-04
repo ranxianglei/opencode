@@ -8,7 +8,7 @@ import { List } from "@opencode-ai/ui/list"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { useMutation } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
-import { batch, createEffect, createMemo, onCleanup, Show, startTransition, untrack } from "solid-js"
+import { batch, createEffect, createMemo, createResource, onCleanup, Show, startTransition, untrack } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { DialogWslServer } from "@/components/dialog-wsl-server"
 import { ServerHealthIndicator, ServerRow } from "@/components/server/server-row"
@@ -73,6 +73,32 @@ function showRequestError(language: ReturnType<typeof useLanguage>, err: unknown
 
 function isWslSidecar(conn: ServerConnection.Any): conn is ServerConnection.Sidecar & { variant: "wsl" } {
   return conn.type === "sidecar" && conn.variant === "wsl"
+}
+
+function useDefaultServer() {
+  const language = useLanguage()
+  const platform = usePlatform()
+  const [defaultKey, defaultActions] = createResource(
+    async () => {
+      try {
+        return (await platform.getDefaultServer?.()) ?? null
+      } catch (err) {
+        showRequestError(language, err)
+        return null
+      }
+    },
+    { initialValue: null },
+  )
+  const canDefault = createMemo(() => !!platform.getDefaultServer && !!platform.setDefaultServer)
+  const setDefault = async (key: ServerConnection.Key | null) => {
+    try {
+      await platform.setDefaultServer?.(key)
+      defaultActions.mutate(key)
+    } catch (err) {
+      showRequestError(language, err)
+    }
+  }
+  return { defaultKey, canDefault, setDefault }
 }
 
 function ServerForm(props: ServerFormProps) {
@@ -146,6 +172,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
   const platform = usePlatform()
   const language = useLanguage()
   const wslServers = useWslServers()
+  const defaultServer = useDefaultServer()
   const checkServerHealth = useCheckServerHealth()
   let disposed = false
   onCleanup(() => {
@@ -271,7 +298,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
     },
     onSuccess: async (key) => {
       server.remove(key)
-      if (server.defaultKey() === key) await server.setDefault(null)
+      if (defaultServer.defaultKey() === key) await defaultServer.setDefault(null)
     },
     onError: (err) => showRequestError(language, err),
   }))
@@ -546,7 +573,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
 
   async function handleRemove(key: ServerConnection.Key) {
     server.remove(key)
-    if (server.defaultKey() === key) await server.setDefault(null)
+    if (defaultServer.defaultKey() === key) await defaultServer.setDefault(null)
   }
 
   return (
@@ -603,7 +630,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
               const wsl = isWslSidecar(i)
               const wslDistro = wsl ? i.distro : undefined
               const blocked = () => health(key)?.healthy === false
-              const canChangeDefault = () => server.canDefault() && i.type !== "ssh"
+              const canChangeDefault = () => defaultServer.canDefault() && i.type !== "ssh"
               const canRemove = () => i.type === "http" || wsl
               const outdated = () => {
                 const check = wslCheck(i)
@@ -632,7 +659,7 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                     version={wslCheck(i)?.version ?? undefined}
                     class="flex items-center gap-3 min-w-0 flex-1"
                     badge={
-                      <Show when={server.defaultKey() === ServerConnection.key(i)}>
+                      <Show when={defaultServer.defaultKey() === ServerConnection.key(i)}>
                         <span class="text-text-base bg-surface-base text-14-regular px-1.5 rounded-xs">
                           {language.t("dialog.server.status.default")}
                         </span>
@@ -689,15 +716,15 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                                 <DropdownMenu.ItemLabel>Retry start</DropdownMenu.ItemLabel>
                               </DropdownMenu.Item>
                             </Show>
-                            <Show when={canChangeDefault() && server.defaultKey() !== key}>
-                              <DropdownMenu.Item onSelect={() => void server.setDefault(key)}>
+                            <Show when={canChangeDefault() && defaultServer.defaultKey() !== key}>
+                              <DropdownMenu.Item onSelect={() => void defaultServer.setDefault(key)}>
                                 <DropdownMenu.ItemLabel>
                                   {language.t("dialog.server.menu.default")}
                                 </DropdownMenu.ItemLabel>
                               </DropdownMenu.Item>
                             </Show>
-                            <Show when={canChangeDefault() && server.defaultKey() === key}>
-                              <DropdownMenu.Item onSelect={() => void server.setDefault(null)}>
+                            <Show when={canChangeDefault() && defaultServer.defaultKey() === key}>
+                              <DropdownMenu.Item onSelect={() => void defaultServer.setDefault(null)}>
                                 <DropdownMenu.ItemLabel>
                                   {language.t("dialog.server.menu.defaultRemove")}
                                 </DropdownMenu.ItemLabel>

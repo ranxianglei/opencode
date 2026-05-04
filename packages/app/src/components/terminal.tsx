@@ -62,26 +62,6 @@ const DEFAULT_TERMINAL_COLORS: Record<"light" | "dark", TerminalColors> = {
   },
 }
 
-const getTerminalColors = (theme: ReturnType<typeof useTheme>): TerminalColors => {
-  const mode = theme.mode() === "dark" ? "dark" : "light"
-  const fallback = DEFAULT_TERMINAL_COLORS[mode]
-  const currentTheme = theme.themes()[theme.themeId()]
-  if (!currentTheme) return fallback
-  const variant = mode === "dark" ? currentTheme.dark : currentTheme.light
-  if (!variant?.seeds && !variant?.palette) return fallback
-  const resolved = resolveThemeVariant(variant, mode === "dark")
-  const text = resolved["text-stronger"] ?? fallback.foreground
-  const background = resolved["background-stronger"] ?? fallback.background
-  const alpha = mode === "dark" ? 0.25 : 0.2
-  const base = text.startsWith("#") ? (text as HexColor) : (fallback.foreground as HexColor)
-  return {
-    background,
-    foreground: text,
-    cursor: text,
-    selectionBackground: withAlpha(base, alpha),
-  }
-}
-
 const debugTerminal = (...values: unknown[]) => {
   if (!import.meta.env.DEV) return
   console.debug("[terminal]", ...values)
@@ -92,11 +72,6 @@ const errorName = (err: unknown) => {
   if (!("name" in err)) return
   const errorName = err.name
   return typeof errorName === "string" ? errorName : undefined
-}
-
-const logTerminal = (phase: string, input: Record<string, unknown>) => {
-  if (!import.meta.env.DEV) return
-  console.log(`[terminal ui] ${JSON.stringify({ phase, ...input })}`)
 }
 
 const useTerminalUiBindings = (input: {
@@ -258,7 +233,28 @@ export const Terminal = (props: TerminalProps) => {
       })
   }
 
-  const terminalColors = createMemo(() => getTerminalColors(theme))
+  const getTerminalColors = (): TerminalColors => {
+    const mode = theme.mode() === "dark" ? "dark" : "light"
+    const fallback = DEFAULT_TERMINAL_COLORS[mode]
+    const currentTheme = theme.themes()[theme.themeId()]
+    if (!currentTheme) return fallback
+    const variant = mode === "dark" ? currentTheme.dark : currentTheme.light
+    if (!variant?.seeds && !variant?.palette) return fallback
+    const resolved = resolveThemeVariant(variant, mode === "dark")
+    const text = resolved["text-stronger"] ?? fallback.foreground
+    const background = resolved["background-stronger"] ?? fallback.background
+    const alpha = mode === "dark" ? 0.25 : 0.2
+    const base = text.startsWith("#") ? (text as HexColor) : (fallback.foreground as HexColor)
+    const selectionBackground = withAlpha(base, alpha)
+    return {
+      background,
+      foreground: text,
+      cursor: text,
+      selectionBackground,
+    }
+  }
+
+  const terminalColors = createMemo(getTerminalColors)
 
   const scheduleFit = () => {
     if (disposed) return
@@ -454,32 +450,20 @@ export const Terminal = (props: TerminalProps) => {
           output.flush(resolve)
         })
 
-      // Defer the serialised `restore` buffer until the WebSocket actually
-      // opens against the live PTY. Previously we wrote it synchronously
-      // before connect, which painted stale content on screen whenever the
-      // sidecar had restarted (e.g. a server swap): every saved pty id
-      // belongs to the old sidecar, so connect eventually fails and the
-      // clone handler wipes the buffer — but you'd see the old bash/pwsh
-      // scrollback flash first. Now `restore` is only applied once we know
-      // the pty is real (handleOpen), and if connect fails clone clears
-      // `buffer` in the store so the next mount has nothing to replay.
-      fit.fit()
-      scheduleSize(t.cols, t.rows)
-      startResize()
-
-      let restored = false
-      const applyRestore = async () => {
-        if (restored) return
-        restored = true
-        if (!restore) return
-        logTerminal("restore.apply", {
-          id,
-          serverKey: server.key ?? null,
-          directory,
-          restoreLength: restore.length,
-        })
+      if (restore && restoreSize) {
         await write(restore)
+        fit.fit()
+        scheduleSize(t.cols, t.rows)
         if (scrollY !== undefined) t.scrollToLine(scrollY)
+        startResize()
+      } else {
+        fit.fit()
+        scheduleSize(t.cols, t.rows)
+        if (restore) {
+          await write(restore)
+          if (scrollY !== undefined) t.scrollToLine(scrollY)
+        }
+        startResize()
       }
 
       const once = { value: false }
@@ -536,16 +520,6 @@ export const Terminal = (props: TerminalProps) => {
           next.password = password
         }
 
-        logTerminal("socket.open", {
-          id,
-          serverKey: server.key ?? null,
-          directory,
-          restoreLength: restore.length,
-          sdkUrl: sdk.url,
-          currentUrl: url,
-          wsUrl: next.toString(),
-        })
-
         const socket = new WebSocket(next)
         socket.binaryType = "arraybuffer"
         ws = socket
@@ -553,16 +527,6 @@ export const Terminal = (props: TerminalProps) => {
         const handleOpen = () => {
           if (disposed) return
           tries = 0
-          logTerminal("socket.connected", {
-            id,
-            serverKey: server.key ?? null,
-            directory,
-            currentUrl: url,
-          })
-          // Paint the saved buffer now that we've confirmed the pty really
-          // exists on the current sidecar. Fire-and-forget: write()'s own
-          // flush keeps the data ordered with incoming WS messages.
-          void applyRestore()
           local.onConnect?.()
           scheduleSize(t.cols, t.rows)
         }
@@ -617,14 +581,6 @@ export const Terminal = (props: TerminalProps) => {
           socket.removeEventListener("close", handleClose)
           if (disposed) return
           if (event.code === 1000) return
-          logTerminal("socket.closed", {
-            id,
-            serverKey: server.key ?? null,
-            directory,
-            code: event.code,
-            reason: event.reason || null,
-            currentUrl: url,
-          })
           retry(new Error(language.t("terminal.connectionLost.abnormalClose", { code: event.code })))
         }
 
@@ -650,13 +606,6 @@ export const Terminal = (props: TerminalProps) => {
   })
 
   onCleanup(() => {
-    logTerminal("cleanup", {
-      id,
-      serverKey: server.key ?? null,
-      directory,
-      cursor,
-      restoreLength: restore.length,
-    })
     disposed = true
     if (fitFrame !== undefined) cancelAnimationFrame(fitFrame)
     if (sizeTimer !== undefined) clearTimeout(sizeTimer)
@@ -664,30 +613,17 @@ export const Terminal = (props: TerminalProps) => {
     drop?.()
     if (ws && ws.readyState !== WebSocket.CLOSED && ws.readyState !== WebSocket.CLOSING) ws.close(1000)
 
-    // Defer finalize (persistTerminal + local cleanup()) to a microtask so
-    // that its synchronous store write inside `persistTerminal` — which
-    // flows through `props.onCleanup` -> `ops.update` -> `update()` in
-    // `context/terminal.tsx` and calls `setStore("all", i, ...)` — does
-    // NOT run inside the outer solid cleanNode cascade. Running it
-    // synchronously mid-cascade races with solid's recursive owned
-    // iteration (readSignal on a stale memo re-enters updateComputation,
-    // which nulls an ancestor's owned while the outer loop is still
-    // iterating it) and crashes with "Cannot read properties of null
-    // (reading '1')" at node.owned[i] inside chunk-EZWYHVNM.js cleanNode.
-    // queueMicrotask runs after the current sync reactive flush, so the
-    // store write lands in a fresh tick.
     const finalize = () => {
       persistTerminal({ term, addon: serializeAddon, cursor, id, onCleanup: props.onCleanup })
       cleanup()
     }
-    const schedule = () => queueMicrotask(finalize)
 
     if (!output) {
-      schedule()
+      finalize()
       return
     }
 
-    output.flush(schedule)
+    output.flush(finalize)
   })
 
   return (

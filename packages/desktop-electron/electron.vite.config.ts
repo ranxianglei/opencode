@@ -82,13 +82,6 @@ export default defineConfig({
     plugins: [appPlugin, sentry],
     publicDir: "../../../app/public",
     root: "src/renderer",
-    server: {
-      host: "127.0.0.1",
-      strictPort: true,
-      hmr: {
-        host: "127.0.0.1",
-      },
-    },
     define: {
       "import.meta.env.VITE_OPENCODE_CHANNEL": JSON.stringify(channel),
     },

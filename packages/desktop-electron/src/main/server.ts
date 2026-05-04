@@ -10,18 +10,11 @@ import { type WslCommandLine, resolveWslOpencode, shellEscape, wslArgs } from ".
 export type HealthCheck = { wait: Promise<void> }
 
 export function getDefaultServerUrl(): string | null {
-  const store = getStore()
-  const value = store.get(DEFAULT_SERVER_URL_KEY)
-  if (typeof value !== "string") return null
-  if (value === "sidecar") {
-    store.set(DEFAULT_SERVER_URL_KEY, "local:windows")
-    return "local:windows"
-  }
-  return value
+  const value = getStore().get(DEFAULT_SERVER_URL_KEY)
+  return typeof value === "string" ? value : null
 }
 
 export function setDefaultServerUrl(url: string | null) {
-  const store = getStore()
   if (url) {
     getStore().set(DEFAULT_SERVER_URL_KEY, url)
     return

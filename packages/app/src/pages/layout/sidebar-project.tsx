@@ -34,17 +34,6 @@ export type ProjectSidebarContext = {
   sessionProps: Omit<SessionItemProps, "session" | "list" | "slug" | "mobile" | "dense">
 }
 
-const PROJECT_SORTABLE_PREFIX = "project:"
-
-export function projectSortableId(worktree: string) {
-  return `${PROJECT_SORTABLE_PREFIX}${worktree}`
-}
-
-export function projectSortableWorktree(id: string | undefined) {
-  if (!id?.startsWith(PROJECT_SORTABLE_PREFIX)) return
-  return id.slice(PROJECT_SORTABLE_PREFIX.length)
-}
-
 export const ProjectDragOverlay = (props: {
   projects: Accessor<LocalProject[]>
   activeProject: Accessor<string | undefined>
@@ -286,7 +275,7 @@ export const SortableProject = (props: {
 }): JSX.Element => {
   const globalSync = useGlobalSync()
   const language = useLanguage()
-  const sortable = createSortable(projectSortableId(props.project.worktree))
+  const sortable = createSortable(props.project.worktree)
   const selected = createMemo(() => props.ctx.currentProject()?.worktree === props.project.worktree)
   const workspaces = createMemo(() => props.ctx.workspaceIds(props.project).slice(0, 2))
   const workspaceEnabled = createMemo(() => props.ctx.workspacesEnabled(props.project))

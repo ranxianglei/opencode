@@ -29,33 +29,33 @@ const Context = createContext<ReturnType<typeof init>>()
 
 function init() {
   const [active, setActive] = createSignal<Active | undefined>()
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let locked = false
+  const timer = { current: undefined as ReturnType<typeof setTimeout> | undefined }
+  const lock = { value: false }
 
   onCleanup(() => {
-    if (timer === undefined) return
-    clearTimeout(timer)
-    timer = undefined
+    if (timer.current === undefined) return
+    clearTimeout(timer.current)
+    timer.current = undefined
   })
 
   const close = () => {
     const current = active()
-    if (!current || locked) return
-    locked = true
+    if (!current || lock.value) return
+    lock.value = true
     current.onClose?.()
     current.setClosing(true)
 
     const id = current.id
-    if (timer !== undefined) {
-      clearTimeout(timer)
-      timer = undefined
+    if (timer.current !== undefined) {
+      clearTimeout(timer.current)
+      timer.current = undefined
     }
 
-    timer = setTimeout(() => {
-      timer = undefined
+    timer.current = setTimeout(() => {
+      timer.current = undefined
       current.dispose()
       if (active()?.id === id) setActive(undefined)
-      locked = false
+      lock.value = false
     }, 100)
   }
 
@@ -80,11 +80,11 @@ function init() {
       setActive(undefined)
     }
 
-    if (timer !== undefined) {
-      clearTimeout(timer)
-      timer = undefined
+    if (timer.current !== undefined) {
+      clearTimeout(timer.current)
+      timer.current = undefined
     }
-    locked = false
+    lock.value = false
 
     const id = Math.random().toString(36).slice(2)
     let dispose: (() => void) | undefined
@@ -105,7 +105,7 @@ function init() {
             }}
           >
             <Kobalte.Portal>
-              <Kobalte.Overlay data-component="dialog-overlay" />
+              <Kobalte.Overlay data-component="dialog-overlay" onClick={close} />
               {element()}
             </Kobalte.Portal>
           </Kobalte>
@@ -115,14 +115,7 @@ function init() {
 
     if (!dispose || !setClosing) return
 
-    setActive({
-      id,
-      node,
-      dispose,
-      owner,
-      onClose,
-      setClosing,
-    })
+    setActive({ id, node, dispose, owner, onClose, setClosing })
   }
 
   return {

@@ -11,7 +11,7 @@ import type {
   WslServersEvent,
   WslServersState,
 } from "../preload/types"
-import { LEGACY_LOCAL_SERVER_KEY, WSL_SERVERS_KEY } from "./constants"
+import { WSL_SERVERS_KEY } from "./constants"
 import { getStore } from "./store"
 import {
   installWslDistro,
@@ -375,24 +375,7 @@ function readPersistedServers(): WslServerConfig[] {
     const list = Array.isArray(record.servers) ? record.servers : []
     return list.flatMap(normalizePersistedServer)
   }
-  const migrated = migrateLegacyLocalServer()
-  if (migrated.length) store.set(WSL_SERVERS_KEY, { servers: migrated })
-  return migrated
-}
-
-function migrateLegacyLocalServer(): WslServerConfig[] {
-  const legacy = getStore().get(LEGACY_LOCAL_SERVER_KEY)
-  if (!legacy || typeof legacy !== "object") return []
-  const record = legacy as Record<string, unknown>
-  if (record.mode !== "wsl") return []
-  const distro = typeof record.distro === "string" ? record.distro : null
-  if (!distro) return []
-  return [
-    {
-      id: wslServerIdForDistro(distro),
-      distro,
-    },
-  ]
+  return []
 }
 
 function normalizePersistedServer(value: unknown): WslServerConfig[] {

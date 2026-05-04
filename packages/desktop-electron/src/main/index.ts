@@ -37,13 +37,12 @@ const { autoUpdater } = pkg
 
 import type { InitStep, ServerReadyData, SqliteMigrationProgress } from "../preload/types"
 import { checkAppExists, resolveAppPath, wslPath } from "./apps"
-import { CHANNEL, UPDATER_ENABLED, WSL_SERVERS_KEY } from "./constants"
+import { CHANNEL, UPDATER_ENABLED } from "./constants"
 import { registerIpcHandlers, sendDeepLinks, sendMenuCommand, sendSqliteMigrationProgress } from "./ipc"
 import { initLogging } from "./logging"
 import { parseMarkdown } from "./markdown"
 import { createMenu } from "./menu"
 import { allocatePort, getDefaultServerUrl, setDefaultServerUrl, spawnLocalServer, spawnWslSidecar } from "./server"
-import { getStore } from "./store"
 import { createWslServersController } from "./wsl-servers"
 import {
   createLoadingWindow,
@@ -63,7 +62,6 @@ const loadingComplete = defer<void>()
 const pendingDeepLinks: string[] = []
 
 const serverReady = defer<ServerReadyData>()
-void serverReady.promise.catch(() => undefined)
 const logger = initLogging()
 const wslServers = createWslServersController(
   app.getVersion(),
@@ -83,30 +81,12 @@ logger.log("app starting", {
   version: app.getVersion(),
   packaged: app.isPackaged,
 })
-// NOTE: the first getStore() call here is intentional — it is the earliest
-// point after `app.setName` / `app.setPath("userData", ...)` have run, so
-// electron-store correctly resolves its root to the channel-specific
-// userData dir (`...desktop.dev` in dev) rather than the package.json name.
-logger.log("config paths", {
-  userData: app.getPath("userData"),
-  settingsStore: getStore().path,
-  wslServersKey: WSL_SERVERS_KEY,
-  wslServers: getStore().get(WSL_SERVERS_KEY) ?? null,
-})
 
 setupApp()
 
 function setupApp() {
   ensureLoopbackNoProxy()
   app.commandLine.appendSwitch("proxy-bypass-list", "<-loopback>")
-
-  process.on("uncaughtException", (error) => {
-    logger.error("main process uncaught exception", error)
-  })
-
-  process.on("unhandledRejection", (reason) => {
-    logger.error("main process unhandled rejection", reason)
-  })
 
   if (!app.requestSingleInstanceLock()) {
     app.quit()
@@ -182,11 +162,6 @@ async function initialize() {
   const url = `http://${hostname}:${port}`
   const password = randomUUID()
 
-  const startupData: ServerReadyData = {
-    url,
-    username: "opencode",
-    password,
-  }
   const loadingTask = (async () => {
     logger.log("sidecar connection started", { url })
 
@@ -207,40 +182,26 @@ async function initialize() {
       initEmitter.emit("sqlite", { type: "Done" })
     }
 
-    logger.log("spawning windows sidecar", { url })
-    let startupError: Error | null = null
-    const startup = await (async () => {
-      try {
-        return await spawnLocalServer(hostname, port, password)
-      } catch (error) {
-        startupError = asError(error)
-        logger.error("windows sidecar startup failed", startupError)
-        return undefined
-      }
-    })()
-    server = startup?.listener ?? null
+    logger.log("spawning sidecar", { url })
+    const { listener, health } = await spawnLocalServer(hostname, port, password)
+    server = listener
+    serverReady.resolve({
+      url,
+      username: "opencode",
+      password,
+    })
 
     // Initialize WSL sidecars in parallel; failures do not block app startup.
-    void wslServers.initialize().catch((error) => logger.error("wsl server initialization failed", asError(error)))
+    void wslServers.initialize().catch((error) => logger.error("wsl server initialization failed", error))
 
-    if (startup) {
-      await Promise.race([
-        startup.health.wait,
-        delay(30_000).then(() => {
-          throw new Error("Sidecar health check timed out")
-        }),
-      ])
-        .then(() => {
-          serverReady.resolve(startupData)
-        })
-        .catch((error) => {
-          startupError = asError(error)
-          logger.error("sidecar health check failed", startupError)
-          serverReady.reject(startupError)
-        })
-    } else {
-      serverReady.reject(startupError ?? new Error("Local server startup failed"))
-    }
+    await Promise.race([
+      health.wait,
+      delay(30_000).then(() => {
+        throw new Error("Sidecar health check timed out")
+      }),
+    ]).catch((error) => {
+      logger.error("sidecar health check failed", error)
+    })
 
     logger.log("loading task finished")
   })()
@@ -249,7 +210,6 @@ async function initialize() {
     const show = await Promise.race([loadingTask.then(() => false), delay(1_000).then(() => true)])
     if (show) {
       overlay = createLoadingWindow()
-      wireWindowDiagnostics(overlay, "loading")
       await delay(1_000)
     }
   }
@@ -262,65 +222,9 @@ async function initialize() {
   }
 
   mainWindow = createMainWindow()
-  wireWindowDiagnostics(mainWindow, "main")
   wireMenu()
 
   overlay?.close()
-}
-
-function wireWindowDiagnostics(win: BrowserWindow, label: string) {
-  win.webContents.on("console-message", (_event, level, message, line, sourceId) => {
-    // Render `message` as a block so multi-line stack traces survive; the
-    // previous shape stuffed the message into a JSON object which escaped
-    // `\n` and made stacks unreadable.
-    const location = sourceId ? ` [${sourceId}:${line}]` : ""
-    const text = `${label} renderer${location}\n${message}`
-    if (level >= 3) {
-      logger.error(text)
-      return
-    }
-    if (level >= 2) {
-      logger.warn(text)
-      return
-    }
-    logger.log(text)
-  })
-
-  win.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-    logger.error(`${label} renderer failed load`, {
-      errorCode,
-      errorDescription,
-      validatedURL,
-      isMainFrame,
-    })
-  })
-
-  win.webContents.on("render-process-gone", (_event, details) => {
-    logger.error(`${label} renderer process gone`, details)
-  })
-
-  win.webContents.on("preload-error", (_event, path, error) => {
-    logger.error(`${label} preload error`, {
-      path,
-      error: error instanceof Error ? (error.stack ?? error.message) : String(error),
-    })
-  })
-
-  // DevTools accelerators on Windows/Linux where the menu isn't created.
-  win.webContents.on("before-input-event", (_event, input) => {
-    if (input.type !== "keyDown") return
-    const key = input.key
-    const toggle =
-      key === "F12" ||
-      (input.control && input.shift && (key === "I" || key === "i")) ||
-      (input.meta && input.alt && (key === "I" || key === "i"))
-    if (!toggle) return
-    win.webContents.toggleDevTools()
-  })
-
-  win.on("unresponsive", () => {
-    logger.error(`${label} window became unresponsive`)
-  })
 }
 
 function wireMenu() {
@@ -541,10 +445,6 @@ async function checkForUpdates(alertOnFail: boolean) {
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-function asError(error: unknown) {
-  return error instanceof Error ? error : new Error(String(error))
 }
 
 function defer<T>() {

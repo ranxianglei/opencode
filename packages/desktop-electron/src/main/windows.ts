@@ -177,9 +177,7 @@ export function registerRendererProtocol() {
 function loadWindow(win: BrowserWindow, html: string) {
   const devUrl = process.env.ELECTRON_RENDERER_URL
   if (devUrl) {
-    const base = new URL(devUrl)
-    if (base.hostname === "localhost") base.hostname = "127.0.0.1"
-    const url = new URL(html, base)
+    const url = new URL(html, devUrl)
     void win.loadURL(url.toString())
     return
   }

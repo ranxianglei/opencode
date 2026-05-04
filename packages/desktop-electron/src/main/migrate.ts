@@ -67,8 +67,7 @@ function migrateFile(datPath: string, filename: string) {
 }
 
 export function migrate() {
-  const store = getStore()
-  if (store.get(TAURI_MIGRATED_KEY)) {
+  if (getStore().get(TAURI_MIGRATED_KEY)) {
     log.log("tauri migration: already done, skipping")
     return
   }

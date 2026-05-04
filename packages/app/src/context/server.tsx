@@ -1,11 +1,8 @@
-import { showToast } from "@opencode-ai/ui/toast"
 import { createSimpleContext } from "@opencode-ai/ui/context"
-import { type Accessor, batch, createEffect, createMemo, onCleanup, untrack } from "solid-js"
+import { type Accessor, batch, createEffect, createMemo, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"
 import { useCheckServerHealth } from "@/utils/server-health"
-import { useLanguage } from "./language"
-import { usePlatform } from "./platform"
 
 type StoredProject = { worktree: string; expanded: boolean }
 type StoredServer = string | ServerConnection.HttpBase | ServerConnection.Http
@@ -26,7 +23,7 @@ export function serverName(conn?: ServerConnection.Any, ignoreDisplayName = fals
 
 function projectsKey(key: ServerConnection.Key) {
   if (!key) return ""
-  if (key === "sidecar" || key === "local:windows") return "local"
+  if (key === "sidecar") return "local"
   if (isLocalHost(key)) return "local"
   return key
 }
@@ -84,7 +81,7 @@ export namespace ServerConnection {
         return Key.make(conn.http.url)
       case "sidecar": {
         if (conn.variant === "wsl") return Key.make(`wsl:${conn.distro}`)
-        return Key.make("local:windows")
+        return Key.make("sidecar")
       }
       case "ssh":
         return Key.make(`ssh:${conn.host}`)
@@ -100,13 +97,9 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
   init: (props: {
     defaultServer: ServerConnection.Key
     disableHealthCheck?: boolean
-    serversReady?: boolean
     servers?: Array<ServerConnection.Any>
   }) => {
     const checkServerHealth = useCheckServerHealth()
-    const language = useLanguage()
-    const platform = usePlatform()
-    const serversReady = () => props.serversReady ?? true
 
     const [store, setStore, _, ready] = persisted(
       Persist.global("server", ["server.v3"]),
@@ -144,7 +137,6 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
 
     const [state, setState] = createStore({
       active: props.defaultServer,
-      default: props.defaultServer as ServerConnection.Key | null,
       healthy: undefined as boolean | undefined,
     })
 
@@ -179,28 +171,11 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       if (state.active !== input) setState("active", input)
     }
 
-    async function setDefault(input: ServerConnection.Key | null) {
-      if (!platform.setDefaultServer) return input
-      try {
-        await platform.setDefaultServer(input)
-        setState("default", input)
-        return input
-      } catch (err) {
-        showToast({
-          variant: "error",
-          title: language.t("common.requestFailed"),
-          description: err instanceof Error ? err.message : String(err),
-        })
-        throw err
-      }
-    }
-
-    function nextActiveKey(exclude?: ServerConnection.Key) {
-      const available = allServers().filter((conn) => ServerConnection.key(conn) !== exclude)
-      const preferred = available.find((conn) => ServerConnection.key(conn) === props.defaultServer)
-      const next = preferred ?? available[0]
-      return next ? ServerConnection.key(next) : props.defaultServer
-    }
+    createEffect(() => {
+      if (typeof window === "undefined") return
+      window.__OPENCODE__ ??= {}
+      window.__OPENCODE__.activeServer = state.active
+    })
 
     function add(input: ServerConnection.Http) {
       const url_ = normalizeServerUrl(input.http.url)
@@ -223,39 +198,18 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       batch(() => {
         setStore("list", list)
         if (state.active === key) {
-          setState("active", nextActiveKey(key))
+          const next = list[0]
+          setState("active", next ? ServerConnection.Key.make(url(next)) : props.defaultServer)
         }
       })
     }
 
+    const isReady = createMemo(() => ready() && !!state.active)
+
     const check = (conn: ServerConnection.Any) => checkServerHealth(conn.http).then((x) => x.healthy)
 
     createEffect(() => {
-      const key = state.active
-      if (typeof window === "undefined") return
-      window.__OPENCODE__ ??= {}
-      window.__OPENCODE__.activeServer = key
-    })
-
-    const origin = createMemo(() => projectsKey(state.active))
-    const projectsList = createMemo(() => store.projects[origin()] ?? [])
-    const current: Accessor<ServerConnection.Any | undefined> = createMemo(() => {
-      const list = allServers()
-      const active = list.find((s) => ServerConnection.key(s) === state.active)
-      if (active) return active
-      if (!serversReady()) return
-      return list[0]
-    })
-    const healthTarget = createMemo(() => {
-      const conn = current()
-      if (!conn) return ""
-      return [ServerConnection.key(conn), conn.http.url, conn.http.username ?? "", conn.http.password ?? ""].join("\n")
-    })
-    const isReady = createMemo(() => ready() && !!current())
-
-    createEffect(() => {
-      healthTarget()
-      const current_ = untrack(current)
+      const current_ = current()
       if (!current_) return
 
       if (props.disableHealthCheck) {
@@ -266,14 +220,11 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       onCleanup(startHealthPolling(current_))
     })
 
-    createEffect(() => {
-      if (!serversReady()) return
-      const list = allServers()
-      if (!list.length) return
-      if (list.some((conn) => ServerConnection.key(conn) === state.active)) return
-      setState("active", nextActiveKey(state.active))
-    })
-
+    const origin = createMemo(() => projectsKey(state.active))
+    const projectsList = createMemo(() => store.projects[origin()] ?? [])
+    const current: Accessor<ServerConnection.Any | undefined> = createMemo(
+      () => allServers().find((s) => ServerConnection.key(s) === state.active) ?? allServers()[0],
+    )
     const isLocal = createMemo(() => {
       const c = current()
       return c?.type === "sidecar" || (c?.type === "http" && isLocalHost(c.http.url))
@@ -295,13 +246,6 @@ export const { use: useServer, provider: ServerProvider } = createSimpleContext(
       get current() {
         return current()
       },
-      canDefault() {
-        return !!platform.getDefaultServer && !!platform.setDefaultServer
-      },
-      defaultKey() {
-        return state.default
-      },
-      setDefault,
       setActive,
       add,
       remove,

@@ -22,7 +22,7 @@ beforeAll(async () => {
 })
 
 describe("getWorkspaceTerminalCacheKey", () => {
-  test("uses the workspace cache key", () => {
+  test("uses workspace-only directory cache key", () => {
     expect(getWorkspaceTerminalCacheKey("/repo")).toBe("/repo:__workspace__")
   })
 })
