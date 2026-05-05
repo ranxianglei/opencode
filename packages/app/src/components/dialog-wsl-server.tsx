@@ -91,6 +91,10 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
   })
   const installTarget = createMemo(() => installableDistros().find((item) => item.name === store.installTarget) ?? null)
   const installingDistro = createMemo(() => current()?.job?.kind === "install-distro")
+  const installingOpencode = createMemo(() => {
+    const job = current()?.job
+    return job?.kind === "install-opencode" && job.distro === store.selectedDistro
+  })
   const wslReady = createMemo(() => !!current()?.runtime?.available && !current()?.pendingRestart)
   const distroReady = createMemo(() => {
     const probe = selectedProbe()
@@ -523,6 +527,9 @@ export function DialogWslServer(props: DialogWslServerProps = {}) {
                       disabled={busy()}
                       onClick={() => runSelectedDistro((distro) => api.installOpencode(distro))}
                     >
+                      <Show when={installingOpencode()}>
+                        <Spinner class="size-4 shrink-0" />
+                      </Show>
                       {opencodeCheck()?.resolvedPath ? "Update OpenCode" : "Install OpenCode"}
                     </Button>
                   </Show>

@@ -33,9 +33,8 @@ export type RunWslOptions = {
 const DEFAULT_WSL_TIMEOUT_MS = 20_000
 const DEFAULT_WSL_INSTALL_TIMEOUT_MS = 15 * 60_000
 
-export function wslArgs(args: string[], distro?: string | null) {
-  if (distro) return ["-d", distro, "--", ...args]
-  return ["--", ...args]
+export function wslArgs(args: string[], distro?: string | null, user?: string | null) {
+  return [...(distro ? ["-d", distro] : []), ...(user ? ["--user", user] : []), "--", ...args]
 }
 
 export function runWsl(args: string[], opts: RunWslOptions = {}) {
@@ -333,7 +332,7 @@ export async function readWslCommandVersion(command: string, distro: string, opt
 export async function upgradeWslOpencode(target: string, command: string, distro: string, opts?: RunWslOptions) {
   return runInteractiveCommand(
     resolveSystem32Command("wsl.exe"),
-    wslArgs(["bash", "-lc", `${shellEscape(command)} upgrade ${shellEscape(target)}`], distro),
+    wslArgs(["bash", "-lc", `${shellEscape(command)} upgrade ${shellEscape(target)}`], distro, "root"),
     withTimeout(opts, DEFAULT_WSL_INSTALL_TIMEOUT_MS),
     DEFAULT_WSL_INSTALL_TIMEOUT_MS,
   )

@@ -5,6 +5,7 @@ import { DropdownMenu } from "@opencode-ai/ui/dropdown-menu"
 import { Icon } from "@opencode-ai/ui/icon"
 import { IconButton } from "@opencode-ai/ui/icon-button"
 import { List } from "@opencode-ai/ui/list"
+import { Spinner } from "@opencode-ai/ui/spinner"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { useMutation } from "@tanstack/solid-query"
 import { showToast } from "@opencode-ai/ui/toast"
@@ -717,7 +718,10 @@ export function DialogSelectServer(props: DialogSelectServerProps = {}) {
                             if (wslDistro) updateWslMutation.mutate(wslDistro)
                           }}
                         >
-                          {updating() ? "Updating OpenCode..." : label()}
+                          <Show when={updating()}>
+                            <Spinner class="size-3.5 shrink-0" />
+                          </Show>
+                          {label()}
                         </Button>
                       )}
                     </Show>
