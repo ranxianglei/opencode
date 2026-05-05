@@ -9,6 +9,7 @@ import { Snapshot } from "@/snapshot"
 import * as Session from "./session"
 import { LLM } from "./llm"
 import { MessageV2 } from "./message-v2"
+import { Image } from "@/image/image"
 import { isOverflow } from "./overflow"
 import { PartID } from "./schema"
 import type { SessionID } from "./schema"
@@ -107,6 +108,7 @@ export const layer: Layer.Layer<
     const summary = yield* SessionSummary.Service
     const scope = yield* Scope.Scope
     const status = yield* SessionStatus.Service
+    const image = yield* Image.Service
 
     const create = Effect.fn("SessionProcessor.create")(function* (input: Input) {
       // Pre-capture snapshot before the LLM stream starts. The AI SDK
@@ -182,6 +184,11 @@ export const layer: Layer.Layer<
       ) {
         const match = yield* readToolCall(toolCallID)
         if (!match || match.part.state.status !== "running") return
+        const attachments = output.attachments
+          ? yield* Effect.forEach(output.attachments, (attachment) =>
+              attachment.mime.startsWith("image/") ? image.sanitize(attachment) : Effect.succeed(attachment),
+            )
+          : undefined
         yield* session.updatePart({
           ...match.part,
           state: {
@@ -191,7 +198,7 @@ export const layer: Layer.Layer<
             metadata: output.metadata,
             title: output.title,
             time: { start: match.part.state.time.start, end: Date.now() },
-            attachments: output.attachments,
+            attachments,
           },
         })
         yield* settleToolCall(toolCallID)
@@ -743,7 +750,7 @@ export const layer: Layer.Layer<
 
     return Service.of({ create })
   }),
-)
+).pipe(Layer.provide(Image.layer))
 
 export const defaultLayer = Layer.suspend(() =>
   layer.pipe(
