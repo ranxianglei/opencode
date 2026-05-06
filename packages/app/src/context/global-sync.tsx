@@ -18,8 +18,10 @@ import {
   bootstrapDirectory,
   bootstrapGlobal,
   clearProviderRev,
+  loadAgentsQuery,
   loadGlobalConfigQuery,
   loadPathQuery,
+  loadProjectsQuery,
   loadProvidersQuery,
 } from "./global-sync/bootstrap"
 import { createChildStoreManager } from "./global-sync/child-store"
@@ -77,12 +79,37 @@ function createGlobalSync() {
   const sessionLoads = new Map<string, Promise<void>>()
   const sessionMeta = new Map<string, { limit: number }>()
 
+  const sdkFor = (directory: string) => {
+    const key = directoryKey(directory)
+    const cached = sdkCache.get(key)
+    if (cached) return cached
+    const sdk = globalSDK.createClient({
+      directory,
+      throwOnError: true,
+    })
+    sdkCache.set(key, sdk)
+    return sdk
+  }
+
+  const queryOptionsApi = {
+    globalConfig: () => loadGlobalConfigQuery(globalSDK.client),
+    projects: () => loadProjectsQuery(globalSDK.client),
+    providers: (directory: string | null) =>
+      loadProvidersQuery(directory, directory === null ? globalSDK.client : sdkFor(directory)),
+    path: (directory: string | null) =>
+      loadPathQuery(directory, directory === null ? globalSDK.client : sdkFor(directory)),
+    agents: (directory: string) => loadAgentsQuery(directory, sdkFor(directory)),
+    mcp: (directory: string) => loadMcpQuery(directory, sdkFor(directory)),
+    lsp: (directory: string) => loadLspQuery(directory, sdkFor(directory)),
+    keys: {
+      lsp: lspQueryKey,
+      mcp: mcpQueryKey,
+      sessions: loadSessionsQueryKey,
+    },
+  }
+
   const [configQuery, providerQuery, pathQuery] = useQueries(() => ({
-    queries: [
-      loadGlobalConfigQuery(globalSDK.client),
-      loadProvidersQuery(null, globalSDK.client),
-      loadPathQuery(null, globalSDK.client),
-    ],
+    queries: [queryOptionsApi.globalConfig(), queryOptionsApi.providers(null), queryOptionsApi.path(null)],
   }))
 
   const [globalStore, setGlobalStore] = createStore<GlobalStore>({
@@ -181,18 +208,6 @@ function createGlobalSync() {
     bootstrapInstance,
   })
 
-  const sdkFor = (directory: string) => {
-    const key = directoryKey(directory)
-    const cached = sdkCache.get(key)
-    if (cached) return cached
-    const sdk = globalSDK.createClient({
-      directory,
-      throwOnError: true,
-    })
-    sdkCache.set(key, sdk)
-    return sdk
-  }
-
   const children = createChildStoreManager({
     owner,
     isBooting: (directory) => booting.has(directory),
@@ -209,7 +224,7 @@ function createGlobalSync() {
       clearSessionPrefetchDirectory(key)
     },
     translate: language.t,
-    getSdk: sdkFor,
+    queryOptions: queryOptionsApi,
     global: {
       provider: globalStore.provider,
     },
@@ -368,7 +383,7 @@ function createGlobalSync() {
       setSessionTodo,
       vcsCache: children.vcsCache.get(key),
       loadLsp: () => {
-        void queryClient.fetchQuery(loadLspQuery(key, sdkFor(directory)))
+        void queryClient.fetchQuery(queryOptionsApi.lsp(key))
       },
     })
   })
@@ -426,6 +441,7 @@ function createGlobalSync() {
     },
     child: children.child,
     peek: children.peek,
+    queryOptions: queryOptionsApi,
     // bootstrap,
     updateConfig: updateConfigMutation.mutateAsync,
     project: projectApi,
@@ -446,4 +462,8 @@ export function useGlobalSync() {
   const context = useContext(GlobalSyncContext)
   if (!context) throw new Error("useGlobalSync must be used within GlobalSyncProvider")
   return context
+}
+
+export function useQueryOptions() {
+  return useGlobalSync().queryOptions
 }

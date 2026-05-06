@@ -1,7 +1,7 @@
 import { createRoot, getOwner, onCleanup, runWithOwner, type Owner } from "solid-js"
 import { createStore, type SetStoreFunction, type Store } from "solid-js/store"
 import { Persist, persisted } from "@/utils/persist"
-import type { OpencodeClient, ProviderListResponse, VcsInfo } from "@opencode-ai/sdk/v2/client"
+import type { ProviderListResponse, VcsInfo } from "@opencode-ai/sdk/v2/client"
 import {
   DIR_IDLE_TTL_MS,
   MAX_DIR_STORES,
@@ -26,7 +26,12 @@ export function createChildStoreManager(input: {
   onBootstrap: (directory: string) => void
   onDispose: (directory: string) => void
   translate: (key: string, vars?: Record<string, string | number>) => string
-  getSdk: (directory: string) => OpencodeClient
+  queryOptions: {
+    lsp: (directory: string) => ReturnType<typeof loadLspQuery>
+    mcp: (directory: string) => ReturnType<typeof loadMcpQuery>
+    path: (directory: string) => ReturnType<typeof loadPathQuery>
+    providers: (directory: string) => ReturnType<typeof loadProvidersQuery>
+  }
   global: {
     provider: ProviderListResponse
   }
@@ -171,17 +176,15 @@ export function createChildStoreManager(input: {
 
       const init = () =>
         createRoot((dispose) => {
-          const sdk = input.getSdk(directory)
-
           const initialMeta = meta[0].value
           const initialIcon = icon[0].value
 
           const [pathQuery, mcpQuery, lspQuery, providerQuery] = useQueries(() => ({
             queries: [
-              loadPathQuery(key, sdk),
-              loadMcpQuery(key, sdk),
-              loadLspQuery(key, sdk),
-              loadProvidersQuery(key, sdk),
+              input.queryOptions.path(key),
+              input.queryOptions.mcp(key),
+              input.queryOptions.lsp(key),
+              input.queryOptions.providers(key),
             ],
           }))
 
