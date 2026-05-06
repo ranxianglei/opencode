@@ -33,7 +33,7 @@ export const DialogSelectMcp: Component = () => {
       if (sync.data.mcp[name]?.status === "connected") await sdk.client.mcp.disconnect({ name })
       else await sdk.client.mcp.connect({ name })
     },
-    onSuccess: () => queryClient.refetchQueries({ queryKey: queryOptions.keys.mcp(sync.directory) }),
+    onSuccess: () => queryClient.refetchQueries({ queryKey: queryOptions.mcp(sync.directory).queryKey }),
   }))
 
   const enabledCount = createMemo(() => items().filter((i) => i.status === "connected").length)

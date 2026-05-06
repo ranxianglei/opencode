@@ -50,21 +50,15 @@ type GlobalStore = {
   reload: undefined | "pending" | "complete"
 }
 
-export const loadSessionsQueryKey = (directory: string) => [directory, "loadSessions"] as const
-
-export const mcpQueryKey = (directory: string) => [directory, "mcp"] as const
-
 export const loadMcpQuery = (directory: string, sdk: OpencodeClient) =>
   queryOptions({
-    queryKey: mcpQueryKey(directory),
+    queryKey: [directory, "mcp"] as const,
     queryFn: () => sdk.mcp.status().then((r) => r.data ?? {}),
   })
 
-export const lspQueryKey = (directory: string) => [directory, "lsp"] as const
-
 export const loadLspQuery = (directory: string, sdk: OpencodeClient) =>
   queryOptions({
-    queryKey: lspQueryKey(directory),
+    queryKey: [directory, "lsp"] as const,
     queryFn: () => sdk.lsp.status().then((r) => r.data ?? []),
   })
 
@@ -101,11 +95,7 @@ function createGlobalSync() {
     agents: (directory: string) => loadAgentsQuery(directory, sdkFor(directory)),
     mcp: (directory: string) => loadMcpQuery(directory, sdkFor(directory)),
     lsp: (directory: string) => loadLspQuery(directory, sdkFor(directory)),
-    keys: {
-      lsp: lspQueryKey,
-      mcp: mcpQueryKey,
-      sessions: loadSessionsQueryKey,
-    },
+    sessions: (directory: string) => ({ queryKey: [directory, "loadSessions"] as const }),
   }
 
   const [configQuery, providerQuery, pathQuery] = useQueries(() => ({
@@ -254,7 +244,7 @@ function createGlobalSync() {
     const limit = Math.max(store.limit + SESSION_RECENT_LIMIT, SESSION_RECENT_LIMIT)
     const promise = queryClient
       .fetchQuery({
-        queryKey: loadSessionsQueryKey(key),
+        ...queryOptionsApi.sessions(key),
         queryFn: () =>
           loadRootSessionsWithFallback({
             directory,
