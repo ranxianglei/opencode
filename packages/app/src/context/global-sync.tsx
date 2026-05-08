@@ -35,6 +35,7 @@ import { formatServerError } from "@/utils/server-errors"
 import { queryOptions, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/solid-query"
 import { createRefreshQueue } from "./global-sync/queue"
 import { directoryKey } from "./global-sync/utils"
+import { PathKey } from "@/utils/path-key"
 
 type GlobalStore = {
   ready: boolean
@@ -62,17 +63,17 @@ export const loadLspQuery = (directory: string, sdk: OpencodeClient) =>
     queryFn: () => sdk.lsp.status().then((r) => r.data ?? []),
   })
 
-function makeQueryOptionsApi(globalSDK: () => OpencodeClient, sdkFor: (dir: string) => OpencodeClient) {
+function makeQueryOptionsApi(globalSDK: () => OpencodeClient, sdkFor: (dir: PathKey) => OpencodeClient) {
   return {
     globalConfig: () => loadGlobalConfigQuery(globalSDK()),
     projects: () => loadProjectsQuery(globalSDK()),
-    providers: (directory: string | null) =>
+    providers: (directory: PathKey | null) =>
       loadProvidersQuery(directory, directory === null ? globalSDK() : sdkFor(directory)),
-    path: (directory: string | null) => loadPathQuery(directory, directory === null ? globalSDK() : sdkFor(directory)),
-    agents: (directory: string) => loadAgentsQuery(directory, sdkFor(directory)),
-    mcp: (directory: string) => loadMcpQuery(directory, sdkFor(directory)),
-    lsp: (directory: string) => loadLspQuery(directory, sdkFor(directory)),
-    sessions: (directory: string) => ({ queryKey: [directory, "loadSessions"] as const }),
+    path: (directory: PathKey | null) => loadPathQuery(directory, directory === null ? globalSDK() : sdkFor(directory)),
+    agents: (directory: PathKey) => loadAgentsQuery(directory, sdkFor(directory)),
+    mcp: (directory: PathKey) => loadMcpQuery(directory, sdkFor(directory)),
+    lsp: (directory: PathKey) => loadLspQuery(directory, sdkFor(directory)),
+    sessions: (directory: PathKey) => ({ queryKey: [directory, "loadSessions"] as const }),
   }
 }
 export type QueryOptionsApi = ReturnType<typeof makeQueryOptionsApi>

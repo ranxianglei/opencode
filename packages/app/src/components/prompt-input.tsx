@@ -56,6 +56,7 @@ import { promptPlaceholder } from "./prompt-input/placeholder"
 import { ImagePreview } from "@opencode-ai/ui/image-preview"
 import { useQueries } from "@tanstack/solid-query"
 import { useQueryOptions } from "@/context/global-sync"
+import { pathKey } from "@/utils/path-key"
 
 interface PromptInputProps {
   class?: string
@@ -1254,7 +1255,11 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   }
 
   const [agentsQuery, globalProvidersQuery, providersQuery] = useQueries(() => ({
-    queries: [queryOptions.agents(sdk.directory), queryOptions.providers(null), queryOptions.providers(sdk.directory)],
+    queries: [
+      queryOptions.agents(pathKey(sdk.directory)),
+      queryOptions.providers(null),
+      queryOptions.providers(pathKey(sdk.directory)),
+    ],
   }))
 
   const agentsLoading = () => agentsQuery.isLoading
