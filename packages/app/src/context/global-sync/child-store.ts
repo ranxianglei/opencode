@@ -15,8 +15,7 @@ import {
 } from "./types"
 import { canDisposeDirectory, pickDirectoriesToEvict } from "./eviction"
 import { useQueries } from "@tanstack/solid-query"
-import { loadPathQuery, loadProvidersQuery } from "./bootstrap"
-import { loadLspQuery, loadMcpQuery } from "../global-sync"
+import { QueryOptionsApi } from "../global-sync"
 import { directoryKey, type DirectoryKey } from "./utils"
 
 export function createChildStoreManager(input: {
@@ -26,12 +25,7 @@ export function createChildStoreManager(input: {
   onBootstrap: (directory: string) => void
   onDispose: (directory: string) => void
   translate: (key: string, vars?: Record<string, string | number>) => string
-  queryOptions: {
-    lsp: (directory: string) => ReturnType<typeof loadLspQuery>
-    mcp: (directory: string) => ReturnType<typeof loadMcpQuery>
-    path: (directory: string) => ReturnType<typeof loadPathQuery>
-    providers: (directory: string) => ReturnType<typeof loadProvidersQuery>
-  }
+  queryOptions: QueryOptionsApi
   global: {
     provider: ProviderListResponse
   }

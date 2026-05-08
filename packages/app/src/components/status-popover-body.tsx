@@ -146,7 +146,7 @@ const useMcpToggleMutation = () => {
       const status = sync.data.mcp[name]
       await (status?.status === "connected" ? sdk.client.mcp.disconnect({ name }) : sdk.client.mcp.connect({ name }))
     },
-    onSuccess: () => queryClient.refetchQueries({ queryKey: queryOptions.mcp(sync.directory).queryKey }),
+    onSuccess: () => queryClient.refetchQueries(queryOptions.mcp(sync.directory)),
     onError: (err) => {
       showToast({
         variant: "error",

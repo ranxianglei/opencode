@@ -22,12 +22,7 @@ describe("createChildStoreManager", () => {
       onBootstrap() {},
       onDispose() {},
       translate: (key) => key,
-      queryOptions: {
-        lsp: () => null!,
-        mcp: () => null!,
-        path: () => null!,
-        providers: () => null!,
-      },
+      queryOptions: {} as any,
       global: { provider: null! },
     })
 

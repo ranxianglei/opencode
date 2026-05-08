@@ -62,6 +62,21 @@ export const loadLspQuery = (directory: string, sdk: OpencodeClient) =>
     queryFn: () => sdk.lsp.status().then((r) => r.data ?? []),
   })
 
+function makeQueryOptionsApi(globalSDK: () => OpencodeClient, sdkFor: (dir: string) => OpencodeClient) {
+  return {
+    globalConfig: () => loadGlobalConfigQuery(globalSDK()),
+    projects: () => loadProjectsQuery(globalSDK()),
+    providers: (directory: string | null) =>
+      loadProvidersQuery(directory, directory === null ? globalSDK() : sdkFor(directory)),
+    path: (directory: string | null) => loadPathQuery(directory, directory === null ? globalSDK() : sdkFor(directory)),
+    agents: (directory: string) => loadAgentsQuery(directory, sdkFor(directory)),
+    mcp: (directory: string) => loadMcpQuery(directory, sdkFor(directory)),
+    lsp: (directory: string) => loadLspQuery(directory, sdkFor(directory)),
+    sessions: (directory: string) => ({ queryKey: [directory, "loadSessions"] as const }),
+  }
+}
+export type QueryOptionsApi = ReturnType<typeof makeQueryOptionsApi>
+
 function createGlobalSync() {
   const globalSDK = useGlobalSDK()
   const language = useLanguage()
@@ -85,18 +100,7 @@ function createGlobalSync() {
     return sdk
   }
 
-  const queryOptionsApi = {
-    globalConfig: () => loadGlobalConfigQuery(globalSDK.client),
-    projects: () => loadProjectsQuery(globalSDK.client),
-    providers: (directory: string | null) =>
-      loadProvidersQuery(directory, directory === null ? globalSDK.client : sdkFor(directory)),
-    path: (directory: string | null) =>
-      loadPathQuery(directory, directory === null ? globalSDK.client : sdkFor(directory)),
-    agents: (directory: string) => loadAgentsQuery(directory, sdkFor(directory)),
-    mcp: (directory: string) => loadMcpQuery(directory, sdkFor(directory)),
-    lsp: (directory: string) => loadLspQuery(directory, sdkFor(directory)),
-    sessions: (directory: string) => ({ queryKey: [directory, "loadSessions"] as const }),
-  }
+  const queryOptionsApi = makeQueryOptionsApi(() => globalSDK.client, sdkFor)
 
   const [configQuery, providerQuery, pathQuery] = useQueries(() => ({
     queries: [queryOptionsApi.globalConfig(), queryOptionsApi.providers(null), queryOptionsApi.path(null)],
