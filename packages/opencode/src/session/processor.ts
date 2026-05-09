@@ -185,30 +185,16 @@ export const layer: Layer.Layer<
       ) {
         const match = yield* readToolCall(toolCallID)
         if (!match || match.part.state.status !== "running") return
-        const normalized = output.attachments
-          ? yield* Effect.forEach(output.attachments, (attachment) =>
-              attachment.mime.startsWith("image/")
-                ? image.normalize(attachment).pipe(Effect.exit)
-                : Effect.succeed(Exit.succeed(attachment)),
-            )
-          : undefined
-        const omitted = normalized?.filter(Exit.isFailure).length ?? 0
-        const attachments = normalized
-          ?.filter(Exit.isSuccess)
-          .map((item) => item.value)
         yield* session.updatePart({
           ...match.part,
           state: {
             status: "completed",
             input: match.part.state.input,
-            output:
-              omitted === 0
-                ? output.output
-                : `${output.output}\n\n[${omitted} image${omitted === 1 ? "" : "s"} omitted: could not be resized below the inline image size limit.]`,
+            output: output.output,
             metadata: output.metadata,
             title: output.title,
             time: { start: match.part.state.time.start, end: Date.now() },
-            attachments: attachments?.length ? attachments : undefined,
+            attachments: output.attachments,
           },
         })
         yield* settleToolCall(toolCallID)
@@ -393,17 +379,43 @@ export const layer: Layer.Layer<
 
           case "tool-result": {
             const toolCall = yield* readToolCall(value.toolCallId)
+            const toolAttachments: MessageV2.FilePart[] = (
+              Array.isArray(value.output.attachments) ? value.output.attachments : []
+            ).filter(
+              (attachment: unknown): attachment is MessageV2.FilePart =>
+                isRecord(attachment) &&
+                attachment.type === "file" &&
+                typeof attachment.mime === "string" &&
+                typeof attachment.url === "string",
+            )
+            const normalized = yield* Effect.forEach(
+              toolAttachments,
+              (attachment) =>
+                attachment.mime.startsWith("image/")
+                  ? image.normalize(attachment).pipe(Effect.exit)
+                  : Effect.succeed(Exit.succeed<MessageV2.FilePart>(attachment)),
+            )
+            const omitted = normalized.filter(Exit.isFailure).length
+            const attachments = normalized.filter(Exit.isSuccess).map((item) => item.value)
+            const output = {
+              ...value.output,
+              output:
+                omitted === 0
+                  ? value.output.output
+                  : `${value.output.output}\n\n[${omitted} image${omitted === 1 ? "" : "s"} omitted: could not be resized below the inline image size limit.]`,
+              attachments: attachments?.length ? attachments : undefined,
+            }
             // TODO(v2): Temporary dual-write while migrating session messages to v2 events.
             EventV2.run(SessionEvent.Tool.Success.Sync, {
               sessionID: ctx.sessionID,
               callID: value.toolCallId,
-              structured: value.output.metadata,
+              structured: output.metadata,
               content: [
                 {
                   type: "text",
-                  text: value.output.output,
+                  text: output.output,
                 },
-                ...(value.output.attachments?.map((item: MessageV2.FilePart) => ({
+                ...(output.attachments?.map((item: MessageV2.FilePart) => ({
                   type: "file",
                   uri: item.url,
                   mime: item.mime,
@@ -415,7 +427,7 @@ export const layer: Layer.Layer<
               },
               timestamp: DateTime.makeUnsafe(Date.now()),
             })
-            yield* completeToolCall(value.toolCallId, value.output)
+            yield* completeToolCall(value.toolCallId, output)
             return
           }
 

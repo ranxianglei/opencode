@@ -13,34 +13,6 @@ const log = Log.create({ service: "image" })
 
 type Photon = typeof import("@silvia-odwyer/photon-node")
 
-let photonModule: Photon | null = null
-let photonPromise: Promise<Photon | null> | null = null
-
-function loadPhoton() {
-  if (photonModule) return Promise.resolve(photonModule)
-  if (photonPromise) return photonPromise
-
-  photonPromise = (async () => {
-    const photonWasm = (await import("@silvia-odwyer/photon-node/photon_rs_bg.wasm", { with: { type: "file" } })).default
-    const original = fs.readFileSync
-    fs.readFileSync = ((file: fs.PathOrFileDescriptor, options?: Parameters<typeof fs.readFileSync>[1]) => {
-      if (typeof file === "string" && file.endsWith("photon_rs_bg.wasm")) return original(photonWasm, options)
-      return original(file, options)
-    }) as typeof fs.readFileSync
-    try {
-      photonModule = await import("@silvia-odwyer/photon-node")
-      return photonModule
-    } catch {
-      photonModule = null
-      return null
-    } finally {
-      fs.readFileSync = original
-    }
-  })()
-
-  return photonPromise
-}
-
 export class PhotonUnavailableError extends Schema.TaggedErrorClass<PhotonUnavailableError>()(
   "ImagePhotonUnavailableError",
   {},
@@ -89,6 +61,23 @@ export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const config = yield* Config.Service
+    const loadPhoton = yield* Effect.cached(
+      Effect.promise(async () => {
+        const photonWasm = (await import("@silvia-odwyer/photon-node/photon_rs_bg.wasm", { with: { type: "file" } })).default
+        const original = fs.readFileSync
+        fs.readFileSync = ((file: fs.PathOrFileDescriptor, options?: Parameters<typeof fs.readFileSync>[1]) => {
+          if (typeof file === "string" && file.endsWith("photon_rs_bg.wasm")) return original(photonWasm, options)
+          return original(file, options)
+        }) as typeof fs.readFileSync
+        try {
+          return await import("@silvia-odwyer/photon-node")
+        } catch {
+          return null
+        } finally {
+          fs.readFileSync = original
+        }
+      }),
+    )
 
     const normalize = Effect.fn("Image.normalize")(function* (input: MessageV2.FilePart) {
       const image = (yield* config.get()).attachment?.image
@@ -102,7 +91,7 @@ export const layer = Layer.effect(
         return yield* new InvalidDataUrlError({ url: input.url })
 
       const base64 = input.url.slice(input.url.indexOf(";base64,") + ";base64,".length)
-      const photon = yield* Effect.promise(loadPhoton)
+      const photon = yield* loadPhoton
       if (!photon) return yield* new PhotonUnavailableError()
 
       const decoded = yield* Effect.sync(() => {

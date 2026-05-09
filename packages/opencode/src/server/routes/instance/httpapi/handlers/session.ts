@@ -260,18 +260,18 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     }) {
       const instance = yield* InstanceState.context
       const workspace = yield* InstanceState.workspaceID
+      const message = yield* promptSvc
+        .prompt({
+          ...ctx.payload,
+          sessionID: ctx.params.sessionID,
+        })
+        .pipe(
+          Effect.provideService(InstanceRef, instance),
+          Effect.provideService(WorkspaceRef, workspace),
+          Effect.mapError(() => new HttpApiError.BadRequest({})),
+        )
       return HttpServerResponse.stream(
-        Stream.fromEffect(
-          promptSvc
-            .prompt({
-              ...ctx.payload,
-              sessionID: ctx.params.sessionID,
-            })
-            .pipe(Effect.provideService(InstanceRef, instance), Effect.provideService(WorkspaceRef, workspace)),
-        ).pipe(
-          Stream.map((message) => JSON.stringify(message)),
-          Stream.encodeText,
-        ),
+        Stream.make(JSON.stringify(message)).pipe(Stream.encodeText),
         { contentType: "application/json" },
       )
     })
