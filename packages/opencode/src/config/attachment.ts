@@ -1,8 +1,8 @@
 export * as ConfigAttachment from "./attachment"
 
 import { Schema } from "effect"
-import { zod } from "@/util/effect-zod"
-import { PositiveInt, withStatics } from "@/util/schema"
+import { zod } from "@opencode-ai/core/effect-zod"
+import { PositiveInt, withStatics } from "@opencode-ai/core/schema"
 
 export const Image = Schema.Struct({
   auto_resize: Schema.optional(Schema.Boolean).annotate({
