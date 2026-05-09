@@ -98,7 +98,6 @@ export const layer = Layer.effect(
         maxHeight: image?.max_height ?? MAX_HEIGHT,
         maxBase64Bytes: image?.max_base64_bytes ?? MAX_BASE64_BYTES,
       }
-      if (!info.autoResize) return input
       if (!input.url.startsWith("data:") || !input.url.includes(";base64,"))
         return yield* new InvalidDataUrlError({ url: input.url })
 
@@ -124,6 +123,15 @@ export const layer = Layer.effect(
           Buffer.byteLength(base64, "utf8") <= info.maxBase64Bytes
         )
           return input
+        if (!info.autoResize)
+          return yield* new SizeError({
+            bytes: Buffer.byteLength(base64, "utf8"),
+            max: info.maxBase64Bytes,
+            width: originalWidth,
+            height: originalHeight,
+            max_width: info.maxWidth,
+            max_height: info.maxHeight,
+          })
 
         const scale = Math.min(1, info.maxWidth / originalWidth, info.maxHeight / originalHeight)
         for (const size of Array.from({ length: 32 }).reduce<Array<{ width: number; height: number }>>((acc) => {
@@ -148,8 +156,7 @@ export const layer = Layer.effect(
             })),
           ]
             .map((item) => ({ ...item, bytes: Buffer.byteLength(item.data, "utf8") }))
-            .filter((item) => item.bytes <= info.maxBase64Bytes)
-            .sort((a, b) => a.bytes - b.bytes)[0]
+            .find((item) => item.bytes <= info.maxBase64Bytes)
           resized.free()
 
           if (candidate) {
