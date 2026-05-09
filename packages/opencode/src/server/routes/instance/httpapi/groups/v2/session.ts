@@ -1,7 +1,7 @@
 import { WorkspaceID } from "@/control-plane/schema"
 import { SessionID } from "@/session/schema"
 import { SessionMessage } from "@/v2/session-message"
-import { Prompt } from "@/v2/session-prompt"
+import { Prompt } from "@opencode-ai/core/session-prompt"
 import { SessionV2 } from "@/v2/session"
 import { Schema, SchemaGetter } from "effect"
 import { HttpApiEndpoint, HttpApiError, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
