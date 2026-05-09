@@ -93,6 +93,7 @@ export const layer: Layer.Layer<
   | LLM.Service
   | Permission.Service
   | Plugin.Service
+  | Image.Service
   | SessionSummary.Service
   | SessionStatus.Service
 > = Layer.effect(
@@ -774,7 +775,7 @@ export const layer: Layer.Layer<
 
     return Service.of({ create })
   }),
-).pipe(Layer.provide(Image.layer))
+)
 
 export const defaultLayer = Layer.suspend(() =>
   layer.pipe(
@@ -786,6 +787,7 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(Plugin.defaultLayer),
     Layer.provide(SessionSummary.defaultLayer),
     Layer.provide(SessionStatus.defaultLayer),
+    Layer.provide(Image.defaultLayer),
     Layer.provide(Bus.layer),
     Layer.provide(Config.defaultLayer),
   ),

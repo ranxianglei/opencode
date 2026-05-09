@@ -1774,7 +1774,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       resolvePromptParts,
     })
   }),
-).pipe(Layer.provide(Image.layer))
+)
 
 export const defaultLayer = Layer.suspend(() =>
   layer.pipe(
@@ -1796,6 +1796,7 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(Session.defaultLayer),
     Layer.provide(SessionRevert.defaultLayer),
     Layer.provide(SessionSummary.defaultLayer),
+    Layer.provide(Image.defaultLayer),
     Layer.provide(
       Layer.mergeAll(
         Agent.defaultLayer,
