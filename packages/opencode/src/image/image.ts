@@ -4,8 +4,6 @@ import * as Log from "@opencode-ai/core/util/log"
 import { Context, Effect, Layer, Schema } from "effect"
 import fs from "fs"
 
-import photonWasm from "@silvia-odwyer/photon-node/photon_rs_bg.wasm" with { type: "file" }
-
 const MAX_BASE64_BYTES = 4.5 * 1024 * 1024
 const MAX_WIDTH = 2000
 const MAX_HEIGHT = 2000
@@ -23,6 +21,7 @@ function loadPhoton() {
   if (photonPromise) return photonPromise
 
   photonPromise = (async () => {
+    const photonWasm = (await import("@silvia-odwyer/photon-node/photon_rs_bg.wasm", { with: { type: "file" } })).default
     const original = fs.readFileSync
     fs.readFileSync = ((file: fs.PathOrFileDescriptor, options?: Parameters<typeof fs.readFileSync>[1]) => {
       if (typeof file === "string" && file.endsWith("photon_rs_bg.wasm")) return original(photonWasm, options)
