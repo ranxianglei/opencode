@@ -125,7 +125,7 @@ export const layer = Layer.effect(
       return {
         cancel: (sessionID: SessionID) => cancel(sessionID),
         resolvePromptParts: (template: string) => resolvePromptParts(template),
-        prompt: (input: PromptInput) => prompt(input),
+        prompt: (input: PromptInput) => prompt(input).pipe(Effect.catch(Effect.die)),
       } satisfies TaskPromptOps
     })
 
