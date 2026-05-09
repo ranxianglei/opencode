@@ -1,4 +1,4 @@
-import { Cause, Deferred, Effect, Layer, Context, Scope } from "effect"
+import { Cause, Deferred, Effect, Exit, Layer, Context, Scope } from "effect"
 import * as Stream from "effect/Stream"
 import { Agent } from "@/agent/agent"
 import { Bus } from "@/bus"
@@ -185,21 +185,30 @@ export const layer: Layer.Layer<
       ) {
         const match = yield* readToolCall(toolCallID)
         if (!match || match.part.state.status !== "running") return
-        const attachments = output.attachments
+        const normalized = output.attachments
           ? yield* Effect.forEach(output.attachments, (attachment) =>
-              attachment.mime.startsWith("image/") ? image.sanitize(attachment) : Effect.succeed(attachment),
+              attachment.mime.startsWith("image/")
+                ? image.normalize(attachment).pipe(Effect.exit)
+                : Effect.succeed(Exit.succeed(attachment)),
             )
           : undefined
+        const omitted = normalized?.filter(Exit.isFailure).length ?? 0
+        const attachments = normalized
+          ?.filter(Exit.isSuccess)
+          .map((item) => item.value)
         yield* session.updatePart({
           ...match.part,
           state: {
             status: "completed",
             input: match.part.state.input,
-            output: output.output,
+            output:
+              omitted === 0
+                ? output.output
+                : `${output.output}\n\n[${omitted} image${omitted === 1 ? "" : "s"} omitted: could not be resized below the inline image size limit.]`,
             metadata: output.metadata,
             title: output.title,
             time: { start: match.part.state.time.start, end: Date.now() },
-            attachments,
+            attachments: attachments?.length ? attachments : undefined,
           },
         })
         yield* settleToolCall(toolCallID)
