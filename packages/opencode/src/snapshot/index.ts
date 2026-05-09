@@ -10,8 +10,8 @@ import { Hash } from "@opencode-ai/core/util/hash"
 import { Config } from "@/config/config"
 import { Global } from "@opencode-ai/core/global"
 import * as Log from "@opencode-ai/core/util/log"
-import { NonNegativeInt, withStatics } from "@/util/schema"
-import { zod } from "@/util/effect-zod"
+import { NonNegativeInt, withStatics } from "@opencode-ai/core/schema"
+import { zod } from "@opencode-ai/core/effect-zod"
 
 export const Patch = Schema.Struct({
   hash: Schema.String,
@@ -21,7 +21,10 @@ export type Patch = typeof Patch.Type
 
 export const FileDiff = Schema.Struct({
   file: Schema.String,
-  patch: Schema.String,
+  // Optional because legacy/imported `summary_diffs` on disk may omit
+  // the patch text (see #26574). Required-Schema rejected the whole
+  // /session/<id>/diff response and broke session loading on Desktop.
+  patch: Schema.optional(Schema.String),
   additions: NonNegativeInt,
   deletions: NonNegativeInt,
   status: Schema.optional(Schema.Literals(["added", "deleted", "modified"])),
