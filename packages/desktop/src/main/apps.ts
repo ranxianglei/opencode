@@ -1,64 +1,82 @@
-import { execFile, execFileSync } from "node:child_process"
-import { access, readFile, readdir } from "node:fs/promises"
+import { execFileSync } from "node:child_process"
+import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { dirname, extname, join } from "node:path"
-import util from "node:util"
+import { resolveWslHome, runWslInDistro } from "./wsl"
 
-const execFilePromise = util.promisify(execFile)
-
-const exists = (path: string) =>
-  access(path)
-    .then(() => true)
-    .catch(() => false)
-
-export function checkAppExists(appName: string) {
+export function checkAppExists(appName: string): boolean {
   if (process.platform === "win32") return true
   if (process.platform === "linux") return true
   return checkMacosApp(appName)
 }
 
-export function resolveAppPath(appName: string) {
+export function resolveAppPath(appName: string): string | null {
   if (process.platform !== "win32") return appName
   return resolveWindowsAppPath(appName)
 }
 
-export function wslPath(path: string, mode: "windows" | "linux" | null): string {
+// Parses `\\wsl$\<distro>\...` and `\\wsl.localhost\<distro>\...` UNC paths that
+// point *into* a WSL distro's rootfs. `wslpath -u` cannot handle these reliably:
+// backslashes get shell-collapsed when passed through `wsl.exe`, turning
+// `\\wsl.localhost\Debian\home\luke` into `/mnt/c/wsl.localhostDebianhomeluke`,
+// which is a valid-looking path that wedges opencode on DrvFs stat calls.
+function parseWslUncPath(value: string): { distro: string; subpath: string } | null {
+  // Normalise separators; both `\\` and `//` prefixes mean UNC.
+  const normalised = value.replace(/\\/g, "/").replace(/^\/+/, "//")
+  const match = /^\/\/(wsl\$|wsl\.localhost)\/([^/]+)(?:\/(.*))?$/i.exec(normalised)
+  if (!match) return null
+  const distro = match[2]
+  const subpath = match[3] ?? ""
+  return { distro, subpath }
+}
+
+export async function wslPath(path: string, mode: "windows" | "linux" | null, distro?: string | null): Promise<string> {
   if (process.platform !== "win32") return path
+
+  // `\\wsl$\<distro>\...` / `\\wsl.localhost\<distro>\...` -> `/<subpath>` in
+  // the target distro. Do the conversion in-process rather than shelling out
+  // to `wslpath -u`, which mangles backslashes via wsl.exe's command-line
+  // joiner. If the requested distro differs from the UNC distro, we still
+  // translate literally — callers are responsible for only picking paths
+  // inside the active distro.
+  if (mode === "linux") {
+    const unc = parseWslUncPath(path)
+    if (unc) return `/${unc.subpath}`
+  }
 
   const flag = mode === "windows" ? "-w" : "-u"
   try {
-    if (path.startsWith("~")) {
-      const suffix = path.slice(1)
-      const cmd = `wslpath ${flag} "$HOME${suffix.replace(/"/g, '\\"')}"`
-      const output = execFileSync("wsl", ["-e", "sh", "-lc", cmd])
-      return output.toString().trim()
+    const resolved = path.startsWith("~") ? `${await resolveWslHome(distro)}${path.slice(1)}` : path
+    const input = mode === "linux" ? resolved.replace(/\\/g, "/") : resolved
+    const output = await runWslInDistro(["wslpath", flag, input], distro)
+    if (output.code !== 0) {
+      throw new Error(output.stderr || output.stdout || `wslpath exited with code ${output.code}`)
     }
-
-    const output = execFileSync("wsl", ["-e", "wslpath", flag, path])
-    return output.toString().trim()
+    return output.stdout.trim()
   } catch (error) {
     throw new Error(`Failed to run wslpath: ${String(error)}`, { cause: error })
   }
 }
 
-async function checkMacosApp(appName: string) {
+function checkMacosApp(appName: string) {
   const locations = [`/Applications/${appName}.app`, `/System/Applications/${appName}.app`]
 
   const home = process.env.HOME
   if (home) locations.push(`${home}/Applications/${appName}.app`)
 
-  for (const location of locations) {
-    if (await exists(location)) return true
-  }
+  if (locations.some((location) => existsSync(location))) return true
 
-  return execFilePromise("which", [appName])
-    .then(() => true)
-    .catch(() => false)
+  try {
+    execFileSync("which", [appName])
+    return true
+  } catch {
+    return false
+  }
 }
 
-async function resolveWindowsAppPath(appName: string): Promise<string | null> {
+function resolveWindowsAppPath(appName: string): string | null {
   let output: string
   try {
-    output = execFilePromise("where", [appName]).toString()
+    output = execFileSync("where", [appName]).toString()
   } catch {
     return null
   }
@@ -73,8 +91,8 @@ async function resolveWindowsAppPath(appName: string): Promise<string | null> {
   const exe = paths.find((path) => hasExt(path, "exe"))
   if (exe) return exe
 
-  const resolveCmd = async (path: string) => {
-    const content = await readFile(path, "utf8")
+  const resolveCmd = (path: string) => {
+    const content = readFileSync(path, "utf8")
     for (const token of content.split('"').map((value: string) => value.trim())) {
       const lower = token.toLowerCase()
       if (!lower.includes(".exe")) continue
@@ -92,10 +110,10 @@ async function resolveWindowsAppPath(appName: string): Promise<string | null> {
             return join(current, part)
           }, base)
 
-        if (await exists(resolved)) return resolved
+        if (existsSync(resolved)) return resolved
       }
 
-      if (await exists(token)) return token
+      if (existsSync(token)) return token
     }
 
     return null
@@ -103,20 +121,20 @@ async function resolveWindowsAppPath(appName: string): Promise<string | null> {
 
   for (const path of paths) {
     if (hasExt(path, "cmd") || hasExt(path, "bat")) {
-      const resolved = await resolveCmd(path)
+      const resolved = resolveCmd(path)
       if (resolved) return resolved
     }
 
     if (!extname(path)) {
       const cmd = `${path}.cmd`
-      if (await exists(cmd)) {
-        const resolved = await resolveCmd(cmd)
+      if (existsSync(cmd)) {
+        const resolved = resolveCmd(cmd)
         if (resolved) return resolved
       }
 
       const bat = `${path}.bat`
-      if (await exists(bat)) {
-        const resolved = await resolveCmd(bat)
+      if (existsSync(bat)) {
+        const resolved = resolveCmd(bat)
         if (resolved) return resolved
       }
     }
@@ -133,7 +151,7 @@ async function resolveWindowsAppPath(appName: string): Promise<string | null> {
       const dirs = [dirname(path), dirname(dirname(path)), dirname(dirname(dirname(path)))]
       for (const dir of dirs) {
         try {
-          for (const entry of await readdir(dir)) {
+          for (const entry of readdirSync(dir)) {
             const candidate = join(dir, entry)
             if (!hasExt(candidate, "exe")) continue
             const stem = entry.replace(/\.exe$/i, "")
