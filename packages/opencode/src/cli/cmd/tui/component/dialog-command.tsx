@@ -62,11 +62,12 @@ function init() {
 
   useKeyboard((evt) => {
     if (suspended()) return
-    if (dialog.stack.length > 0) return
     if (evt.defaultPrevented) return
+    // Always allow session_interrupt (ESC) to pass through, even with open dialogs
     for (const option of entries()) {
       if (!isEnabled(option)) continue
       if (option.keybind && keybind.match(option.keybind, evt)) {
+        if (dialog.stack.length > 0 && option.value !== "session.interrupt") continue
         evt.preventDefault()
         option.onSelect?.(dialog)
         return
