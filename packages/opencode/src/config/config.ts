@@ -168,6 +168,10 @@ export const Info = Schema.Struct({
     description:
       "Automatically install/update plugins from npm. Set to false to disable all plugin auto-installation (prevents npm installs of plugin dependencies). Default: true",
   }),
+  disableQuestionTool: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "Disable the question tool entirely. Set to true to remove the question tool from builtin tools. Default: false",
+  }),
   disabled_providers: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
     description: "Disable providers that are loaded automatically",
   }),

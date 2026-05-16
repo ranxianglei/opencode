@@ -22,4 +22,6 @@ Create and manage a structured task list to track progress on complex tasks.
 - Only ONE in_progress at any time
 - Break complex tasks into specific, actionable steps
 - Cancel tasks that become irrelevant
+- Mark completed ONLY after verifying the result (evidence required)
+- If blocked on external dependency, keep task in_progress (not pending)
 
