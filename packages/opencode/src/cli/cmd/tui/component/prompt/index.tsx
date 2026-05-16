@@ -471,7 +471,6 @@ export function Prompt(props: PromptProps) {
         enabled: status().type !== "idle",
         run: () => {
           if (auto()?.visible) return
-          if (!input.focused) return
           // TODO: this should be its own command
           if (store.mode === "shell") {
             setStore("mode", "normal")
@@ -628,6 +627,14 @@ export function Prompt(props: PromptProps) {
     commands: promptCommands(),
   }))
 
+  // session.interrupt must always be reachable, even when a dialog is open.
+  // Without this, pressing ESC when a permission prompt is showing would only
+  // dismiss the dialog — the model then retries the tool and re-opens it,
+  // trapping the user in an infinite dialog loop.
+  useBindings(() => ({
+    bindings: tuiConfig.keybinds.gather("prompt.interrupt", ["session.interrupt"]),
+  }))
+
   useBindings(() => ({
     enabled: command.matcher,
     bindings: tuiConfig.keybinds.gather("prompt.palette", [
@@ -637,7 +644,6 @@ export function Prompt(props: PromptProps) {
       "prompt.stash",
       "prompt.stash.pop",
       "prompt.stash.list",
-      "session.interrupt",
       "workspace.set",
     ]),
   }))
