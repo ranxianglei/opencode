@@ -65,4 +65,7 @@ export const Flag = {
   get OPENCODE_CLIENT() {
     return process.env["OPENCODE_CLIENT"] ?? "cli"
   },
+  get OPENCODE_DISABLE_PLUGIN_INSTALL() {
+    return truthy("OPENCODE_DISABLE_PLUGIN_INSTALL")
+  },
 }

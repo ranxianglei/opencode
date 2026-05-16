@@ -9,6 +9,7 @@ import { Global } from "./global"
 import { EffectFlock } from "./util/effect-flock"
 import { makeRuntime } from "./effect/runtime"
 import { NpmConfig } from "./npm-config"
+import { Flag } from "./flag/flag"
 
 export class InstallFailedError extends Schema.TaggedErrorClass<InstallFailedError>()("NpmInstallFailedError", {
   add: Schema.Array(Schema.String).pipe(Schema.optional),
@@ -111,6 +112,9 @@ export const layer = Layer.effect(
       )
 
     const add = Effect.fn("Npm.add")(function* (pkg: string) {
+      if (Flag.OPENCODE_DISABLE_PLUGIN_INSTALL) {
+        return resolveEntryPoint(pkg, "")
+      }
       const dir = directory(pkg)
       const name = (() => {
         try {
@@ -135,6 +139,8 @@ export const layer = Layer.effect(
     }, Effect.scoped)
 
     const install: Interface["install"] = Effect.fn("Npm.install")(function* (dir, input) {
+      if (Flag.OPENCODE_DISABLE_PLUGIN_INSTALL) return
+
       const canWrite = yield* afs.access(dir, { writable: true }).pipe(
         Effect.as(true),
         Effect.orElseSucceed(() => false),
