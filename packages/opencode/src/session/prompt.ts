@@ -1646,6 +1646,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         const slog = elog.with({ sessionID })
         let structured: unknown
         let step = 0
+        let compactionAttempts = 0
         const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
 
         while (true) {
@@ -1712,9 +1713,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             lastFinished.summary !== true &&
             (yield* compaction.isOverflow({ tokens: lastFinished.tokens, model }))
           ) {
+            compactionAttempts++
+            if (compactionAttempts >= 2) {
+              yield* slog.info("compaction loop detected at overflow check, breaking", { compactionAttempts })
+              break
+            }
             yield* compaction.create({ sessionID, agent: lastUser.agent, model: lastUser.model, auto: true })
             continue
           }
+
+          compactionAttempts = 0
 
           const agent = yield* agents.get(lastUser.agent)
           if (!agent) {
@@ -1852,6 +1860,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
             if (result === "stop") return "break" as const
             if (result === "compact") {
+              compactionAttempts++
+              if (compactionAttempts >= 2) {
+                yield* slog.info("compaction loop detected, breaking", { compactionAttempts })
+                return "break" as const
+              }
               yield* compaction.create({
                 sessionID,
                 agent: lastUser.agent,
